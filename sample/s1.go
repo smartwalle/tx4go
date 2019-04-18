@@ -1,18 +1,8 @@
 package main
 
-import "github.com/smartwalle/tx4go"
+import "github.com/smartwalle/tx4go/sample/service"
 
 func main() {
-}
-
-func Try(ctx *tx4go.Context) {
-
-}
-
-func Confirm(ctx *tx4go.Context) {
-
-}
-
-func Cancel(ctx *tx4go.Context) {
-
+	var order = &service.OrderService{}
+	order.Create()
 }
