@@ -131,15 +131,16 @@ func (this *Tx) Commit() (err error) {
 	// 等待所有的子事务操作完成
 	this.w.Wait()
 
-	// 检查子事务的状态，如果有状态为 rollback 的，则进行 cancel 操作，否则进行 confirm 操作
-	var hasCancel = false
+	// 检查子事务的状态，如果有状态不为 commit 的，则进行 cancel 操作，否则进行 confirm 操作
+	var shouldCancel = false
 	for _, tx := range this.txList {
-		if tx.status == txStatusRollback {
-			hasCancel = true
+		if tx.status != txStatusCommit {
+			shouldCancel = true
+			break
 		}
 	}
 
-	if hasCancel {
+	if shouldCancel {
 		// 通知所有的分支事务，进行 cancel 操作
 		for _, tx := range this.txList {
 			m.cancelTx(tx.txInfo, this.txInfo)
