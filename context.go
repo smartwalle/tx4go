@@ -11,7 +11,6 @@ const (
 )
 
 func txInfoWithContext(ctx context.Context) *TxInfo {
-
 	md, ok := metadata.FromContext(ctx)
 	if ok == false {
 		return nil
