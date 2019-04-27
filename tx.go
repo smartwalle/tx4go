@@ -1,82 +1,215 @@
 package tx4go
 
 import (
+	"context"
 	"github.com/google/uuid"
+	"sync"
 )
 
 // --------------------------------------------------------------------------------
-type TxStatus int
+type txStatus int
 
 const (
-	TxStatusPending TxStatus = iota + 1000
-	TxStatusCommit
-	TxStatusCancel
+	txStatusPending  txStatus = iota + 1000 // 刚刚创建的 tx
+	txStatusCommit                          // 已经提交的 tx
+	txStatusRollback                        // 已经回滚的 tx
 )
 
 // --------------------------------------------------------------------------------
-type TxType int
+type txType int
 
 const (
-	TxTypeRoot TxType = iota + 1000
-	TxTypeBranch
+	txTypeRoot   txType = iota + 1000 // 主事务
+	txTypeBranch                      // 分支事务
 )
+
+// --------------------------------------------------------------------------------
+// TxInfo 事务基本信息
+type TxInfo struct {
+	TxId       string `json:"tx_id"`       // 事务 id
+	ServerName string `json:"server_name"` // 事务服务名称
+	ServerAddr string `json:"server_addr"` // 事务服务地址
+	ServerUUID string `json:"server_uuid"` // 事务服务uuid
+}
 
 // --------------------------------------------------------------------------------
 type Tx struct {
-	id             string
-	pId            string
-	tType          TxType
-	status         TxStatus
+	id string
+	mu sync.Mutex
+	w  sync.WaitGroup
+
+	txInfo         *TxInfo // 当前事务的信息
+	rootTxInfo     *TxInfo // 主事务的信息
+	tType          txType
+	status         txStatus // 用于主事务端维护各分支事务的状态
 	txList         map[string]*Tx
+	ctx            context.Context
 	confirmHandler func()
 	cancelHandler  func()
 }
 
-func (this *Tx) Begin(confirm func(), cancel func()) *Tx {
-	var nTx = &Tx{}
-	nTx.id = uuid.New().String()
-	nTx.tType = TxTypeBranch
-	nTx.status = TxStatusPending
-	nTx.pId = this.id
-	nTx.confirmHandler = confirm
-	nTx.cancelHandler = cancel
-	this.addTx(nTx)
-	return nTx
-}
+func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
+	var t = &Tx{}
+	t.id = uuid.New().String()
+	t.ctx = ctx
 
-func (this *Tx) Commit() {
-}
+	t.confirmHandler = confirm
+	t.cancelHandler = cancel
 
-func (this *Tx) Rollback() {
-	if this.tType == TxTypeRoot {
-		if len(this.txList) > 0 {
-			for _, tx := range this.txList {
-				// 发送消息给 tx，告知其进行取消操作
-				tx.Rollback()
-			}
-		}
+	var rootTxInfo *TxInfo
+	if t.ctx != nil {
+		rootTxInfo = txInfoWithContext(t.ctx)
+	}
+
+	// 构建当前事务的信息
+	t.txInfo = &TxInfo{}
+	t.txInfo.TxId = t.id
+	t.txInfo.ServerName = m.serverName
+	t.txInfo.ServerAddr = m.serverAddr
+	t.txInfo.ServerUUID = m.serverUUID
+
+	if rootTxInfo == nil {
+		// 如果 rootTxInfo 为空，则表示当前事务为主事务
+		t.tType = txTypeRoot
+
+		// 将当前事务的信息放置到 ctx 中
+		t.ctx = txInfoToContext(ctx, t.txInfo)
 	} else {
-		// 发送消息给 root tx，告知其进行取消操作
+		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
+		t.tType = txTypeBranch
+
+		// 构建当前事务的主事务信息
+		t.rootTxInfo = rootTxInfo
+
+		// 发消息告知主事务，有分支事务建立
+		if err := t.register(); err != nil {
+			return nil, err
+		}
 	}
+
+	// 添加事务到管理器中
+	m.addTx(t)
+
+	return t, nil
 }
 
-func (this *Tx) doConfirm() {
-	if this.confirmHandler != nil {
-		this.confirmHandler()
-	}
+func (this *Tx) Context() context.Context {
+	return this.ctx
 }
 
-func (this *Tx) doCancel() {
-	// 只有 commit 了的才需要 cancel
-	if this.status == TxStatusCommit && this.cancelHandler != nil {
-		this.cancelHandler()
-	}
-	this.status = TxStatusCancel
+// --------------------------------------------------------------------------------
+func (this *Tx) register() error {
+	return m.registerTx(this.rootTxInfo, this.txInfo)
 }
 
-func (this *Tx) addTx(tx *Tx) {
+func (this *Tx) registerTx(tx *Tx) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	if tx == nil {
+		return
+	}
+
 	if this.txList == nil {
 		this.txList = make(map[string]*Tx)
 	}
 	this.txList[tx.id] = tx
+
+	this.w.Add(1)
+}
+
+// --------------------------------------------------------------------------------
+func (this *Tx) Commit() (err error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	if this.tType == txTypeBranch {
+		// 如果是分支事务，则向主事务发送消息
+		return m.commitTx(this.rootTxInfo, this.txInfo)
+	}
+
+	// 等待所有的子事务操作完成
+	this.w.Wait()
+
+	// 检查子事务的状态，如果有状态为 rollback 的，则进行 cancel 操作，否则进行 confirm 操作
+	var hasCancel = false
+	for _, tx := range this.txList {
+		if tx.status == txStatusRollback {
+			hasCancel = true
+		}
+	}
+
+	if hasCancel {
+		for _, tx := range this.txList {
+			m.cancelTx(tx.txInfo, this.txInfo)
+		}
+		this.cancelTx()
+	} else {
+		for _, tx := range this.txList {
+			m.confirmTx(tx.txInfo, this.txInfo)
+		}
+		this.confirmTx()
+	}
+
+	return nil
+}
+
+func (this *Tx) commitTx(txId string) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	var tx = this.txList[txId]
+	if tx != nil {
+		tx.status = txStatusCommit
+		this.w.Add(-1)
+	}
+}
+
+func (this *Tx) cancelTx() {
+	if this.cancelHandler != nil {
+		this.cancelHandler()
+	}
+
+	m.delTx(this.id)
+}
+
+func (this *Tx) confirmTx() {
+	if this.confirmHandler != nil {
+		this.confirmHandler()
+	}
+
+	m.delTx(this.id)
+}
+
+// --------------------------------------------------------------------------------
+func (this *Tx) Rollback() (err error) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	if this.tType == txTypeBranch {
+		// 如果是分支事务，则向主事务发送消息
+		return m.rollbackTx(this.rootTxInfo, this.txInfo)
+	}
+
+	// 等待所有的子事务操作完成
+	this.w.Wait()
+
+	// 通知所有的分支事务，进行 cancel 操作
+	for _, tx := range this.txList {
+		m.cancelTx(tx.txInfo, this.txInfo)
+	}
+	this.cancelTx()
+
+	return nil
+}
+
+func (this *Tx) rollbackTx(txId string) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	var tx = this.txList[txId]
+	if tx != nil {
+		tx.status = txStatusRollback
+		this.w.Add(-1)
+	}
 }
