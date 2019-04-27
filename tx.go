@@ -41,8 +41,8 @@ type Tx struct {
 	txInfo         *TxInfo // 当前事务的信息
 	rootTxInfo     *TxInfo // 主事务的信息
 	tType          txType
-	status         txStatus // 用于主事务端维护各分支事务的状态
-	txList         map[string]*Tx
+	status         txStatus       // 用于主事务端维护各分支事务的状态
+	txList         map[string]*Tx // 用于主事务端维护各分支事务
 	ctx            context.Context
 	confirmHandler func()
 	cancelHandler  func()
