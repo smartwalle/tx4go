@@ -216,13 +216,7 @@ func (this *Tx) confirmTx() {
 func (this *Tx) Rollback() (err error) {
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息并直接将当前事务标记为已取消
-		this.mu.Lock()
-		if this.isCancel == true || this.isConfirm == true {
-			this.mu.Unlock()
-			return
-		}
 		this.isCancel = true
-		this.mu.Unlock()
 		err = m.rollbackTx(this.rootTxInfo, this.txInfo)
 	} else {
 		this.mu.Lock()
