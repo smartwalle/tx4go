@@ -93,6 +93,10 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
 	// 添加事务到管理器中
 	m.addTx(t)
 
+	if t.tType == txTypeRoot {
+		t.w.Add(1)
+	}
+
 	return t, nil
 }
 
@@ -131,6 +135,10 @@ func (this *Tx) Commit() (err error) {
 		return m.commitTx(this.rootTxInfo, this.txInfo)
 	}
 
+	if this.isCancel == true || this.isConfirm == true {
+		return
+	}
+
 	// 等待所有的子事务操作完成
 	this.w.Wait()
 
@@ -165,7 +173,7 @@ func (this *Tx) commitTx(txId string) {
 	defer this.mu.Unlock()
 
 	var tx = this.txList[txId]
-	if tx != nil {
+	if tx != nil && tx.status == txStatusPending {
 		tx.status = txStatusCommit
 		this.w.Done()
 	}
@@ -207,6 +215,10 @@ func (this *Tx) Rollback() (err error) {
 		return m.rollbackTx(this.rootTxInfo, this.txInfo)
 	}
 
+	if this.isCancel == true || this.isConfirm == true {
+		return
+	}
+
 	// 等待所有的子事务操作完成
 	this.w.Wait()
 
@@ -224,7 +236,7 @@ func (this *Tx) rollbackTx(txId string) {
 	defer this.mu.Unlock()
 
 	var tx = this.txList[txId]
-	if tx != nil {
+	if tx != nil && tx.status == txStatusPending {
 		tx.status = txStatusRollback
 		this.w.Done()
 	}
