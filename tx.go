@@ -140,11 +140,13 @@ func (this *Tx) Commit() (err error) {
 	}
 
 	if hasCancel {
+		// 通知所有的分支事务，进行 cancel 操作
 		for _, tx := range this.txList {
 			m.cancelTx(tx.txInfo, this.txInfo)
 		}
 		this.cancelTx()
 	} else {
+		// 通知所有的分支事务，进行 confirm 操作
 		for _, tx := range this.txList {
 			m.confirmTx(tx.txInfo, this.txInfo)
 		}
