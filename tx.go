@@ -46,6 +46,9 @@ type Tx struct {
 	ctx            context.Context
 	confirmHandler func()
 	cancelHandler  func()
+
+	isConfirm bool
+	isCancel  bool
 }
 
 func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
@@ -169,17 +172,27 @@ func (this *Tx) commitTx(txId string) {
 }
 
 func (this *Tx) cancelTx() {
-	if this.cancelHandler != nil {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	if this.cancelHandler != nil && this.isCancel == false {
 		this.cancelHandler()
 	}
+
+	this.isCancel = true
 
 	m.delTx(this.id)
 }
 
 func (this *Tx) confirmTx() {
-	if this.confirmHandler != nil {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	if this.confirmHandler != nil && this.isConfirm == false {
 		this.confirmHandler()
 	}
+
+	this.isConfirm = true
 
 	m.delTx(this.id)
 }
