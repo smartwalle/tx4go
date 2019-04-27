@@ -167,7 +167,7 @@ func (this *Tx) commitTx(txId string) {
 	var tx = this.txList[txId]
 	if tx != nil {
 		tx.status = txStatusCommit
-		this.w.Add(-1)
+		this.w.Done()
 	}
 }
 
@@ -226,6 +226,6 @@ func (this *Tx) rollbackTx(txId string) {
 	var tx = this.txList[txId]
 	if tx != nil {
 		tx.status = txStatusRollback
-		this.w.Add(-1)
+		this.w.Done()
 	}
 }
