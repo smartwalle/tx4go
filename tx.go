@@ -123,17 +123,16 @@ func (this *Tx) registerTx(tx *Tx) {
 
 // --------------------------------------------------------------------------------
 func (this *Tx) Commit() (err error) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
 		return m.commitTx(this.rootTxInfo, this.txInfo)
 	}
 
+	this.mu.Lock()
 	if this.isCancel == true || this.isConfirm == true {
 		return
 	}
+	this.mu.Unlock()
 
 	// 等待所有的子事务操作完成
 	this.w.Wait()
@@ -203,17 +202,16 @@ func (this *Tx) confirmTx() {
 
 // --------------------------------------------------------------------------------
 func (this *Tx) Rollback() (err error) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
 		return m.rollbackTx(this.rootTxInfo, this.txInfo)
 	}
 
+	this.mu.Lock()
 	if this.isCancel == true || this.isConfirm == true {
 		return
 	}
+	this.mu.Unlock()
 
 	// 等待所有的子事务操作完成
 	this.w.Wait()
