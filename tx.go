@@ -101,10 +101,12 @@ func (this *Tx) Context() context.Context {
 }
 
 // --------------------------------------------------------------------------------
+// register 分支事务向主事务注册（分）
 func (this *Tx) register() error {
 	return m.registerTx(this.rootTxInfo, this.txInfo)
 }
 
+// registerTx 分支事务向主事务发起注册消息之后，主事务添加分支事务信息（主）
 func (this *Tx) registerTx(tx *Tx) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -122,6 +124,9 @@ func (this *Tx) registerTx(tx *Tx) {
 }
 
 // --------------------------------------------------------------------------------
+// Commit 提交事务
+// 分支事务 - 发消息告知主事务，将该分支事务的状态调整为提交状态
+// 主事务 - 等待所有分支事务的消息，并判断所有分支事务的状态，决定是 cancel 还是 confirm，向所有的分支事务派发对应的消息
 func (this *Tx) Commit() (err error) {
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
@@ -130,6 +135,7 @@ func (this *Tx) Commit() (err error) {
 
 	this.mu.Lock()
 	if this.isCancel == true || this.isConfirm == true {
+		this.mu.Unlock()
 		return
 	}
 	this.mu.Unlock()
@@ -163,6 +169,7 @@ func (this *Tx) Commit() (err error) {
 	return nil
 }
 
+// commitTx 分支事务提交之后，主事务将其维护的分支事务的状态标记为提交（主）
 func (this *Tx) commitTx(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -174,6 +181,7 @@ func (this *Tx) commitTx(txId string) {
 	}
 }
 
+// cancelTx 取消事务（主、分）
 func (this *Tx) cancelTx() {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -187,6 +195,7 @@ func (this *Tx) cancelTx() {
 	m.delTx(this.id)
 }
 
+// confirmTx 确认事务（主、分）
 func (this *Tx) confirmTx() {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -201,30 +210,46 @@ func (this *Tx) confirmTx() {
 }
 
 // --------------------------------------------------------------------------------
+// Rollback 回滚事务
+// 分支事务 - 发消息告知主事务，将该分支事务的状态调整为回滚状态
+// 主事务 - 等待所有分支事务的消息，接收到所有分支事务的消息之后，向所有的分支事务派发 cancel 消息
 func (this *Tx) Rollback() (err error) {
 	if this.tType == txTypeBranch {
-		// 如果是分支事务，则向主事务发送消息
-		return m.rollbackTx(this.rootTxInfo, this.txInfo)
-	}
+		// 如果是分支事务，则向主事务发送消息并直接将当前事务标记为已取消
+		this.mu.Lock()
+		if this.isCancel == true || this.isConfirm == true {
+			this.mu.Unlock()
+			return
+		}
+		this.isCancel = true
+		this.mu.Unlock()
+		err = m.rollbackTx(this.rootTxInfo, this.txInfo)
+	} else {
+		this.mu.Lock()
+		if this.isCancel == true || this.isConfirm == true {
+			this.mu.Unlock()
+			return
+		}
+		this.isCancel = true
+		this.mu.Unlock()
 
-	this.mu.Lock()
-	if this.isCancel == true || this.isConfirm == true {
-		return
-	}
-	this.mu.Unlock()
+		// 等待所有的子事务操作完成
+		this.w.Wait()
 
-	// 等待所有的子事务操作完成
-	this.w.Wait()
-
-	// 通知所有的分支事务，进行 cancel 操作
-	for _, tx := range this.txList {
-		m.cancelTx(tx.txInfo, this.txInfo)
+		// 通知所有的分支事务，进行 cancel 操作
+		for _, tx := range this.txList {
+			// 只向已提交的分支事务发送 cancel 消息
+			if tx.status == txStatusCommit {
+				m.cancelTx(tx.txInfo, this.txInfo)
+			}
+		}
 	}
 	this.cancelTx()
 
-	return nil
+	return err
 }
 
+// rollbackTx 分支事务回滚之后，主事务将其维护的分支事务的状态标记为回滚（主）
 func (this *Tx) rollbackTx(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
