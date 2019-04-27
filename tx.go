@@ -93,10 +93,6 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
 	// 添加事务到管理器中
 	m.addTx(t)
 
-	if t.tType == txTypeRoot {
-		t.w.Add(1)
-	}
-
 	return t, nil
 }
 
