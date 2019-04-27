@@ -293,7 +293,7 @@ func getConfirmTxPath(serverUUID string) string {
 // --------------------------------------------------------------------------------
 type TxParam struct {
 	ToId           string `json:"to_id"`                      // 目标事务id
-	FromId         string `json:"from_id"`                    // 请求来源事务 id
+	FromId         string `json:"from_id"`                    // 请求来源事务的 id
 	FromServerUUID string `json:"from_server_uuid,omitempty"` // 请求来源事务的 server uuid
 	FromServerName string `json:"from_server_name,omitempty"` // 请求来源事务的 server name
 	FromServerAddr string `json:"from_server_addr,omitempty"` // 请求来源事务的 server addr
