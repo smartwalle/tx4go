@@ -133,12 +133,9 @@ func (this *Tx) Commit() (err error) {
 		return m.commitTx(this.rootTxInfo, this.txInfo)
 	}
 
-	this.mu.Lock()
 	if this.isCancel == true || this.isConfirm == true {
-		this.mu.Unlock()
 		return
 	}
-	this.mu.Unlock()
 
 	// 等待所有的子事务操作完成
 	this.w.Wait()
@@ -219,13 +216,10 @@ func (this *Tx) Rollback() (err error) {
 		this.isCancel = true
 		err = m.rollbackTx(this.rootTxInfo, this.txInfo)
 	} else {
-		this.mu.Lock()
 		if this.isCancel == true || this.isConfirm == true {
-			this.mu.Unlock()
 			return
 		}
 		this.isCancel = true
-		this.mu.Unlock()
 
 		// 等待所有的子事务操作完成
 		this.w.Wait()
