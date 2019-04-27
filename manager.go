@@ -14,6 +14,7 @@ import (
 const (
 	kDefaultRetryCount = 3
 	kDefaultRetryDelay = 256 * time.Millisecond
+	kDefaultTimeout    = 5 * time.Second
 )
 
 var (
@@ -30,6 +31,7 @@ type Manager struct {
 	serverAddr string
 	service    *pks.Service
 
+	timeout    time.Duration
 	retryDelay time.Duration
 	retryCount int
 }
@@ -265,7 +267,6 @@ func (this *Manager) request(ctx context.Context, address, path string, param in
 		if rsp, err = this.service.RequestAddress(ctx, address, path, nil, paramBytes); err == nil {
 			return rsp, nil
 		}
-		fmt.Println("============", i, err)
 	}
 
 	return rsp, err
@@ -283,6 +284,7 @@ func Init(s *pks.Service, opts ...Option) {
 		m.serverName = s.ServerName()
 		m.serverAddr = s.ServerAddress()
 
+		m.timeout = kDefaultTimeout
 		m.retryCount = kDefaultRetryCount
 		m.retryDelay = kDefaultRetryDelay
 
@@ -303,6 +305,12 @@ type optionFunc func(*Manager)
 
 func (f optionFunc) Apply(m *Manager) {
 	f(m)
+}
+
+func WithTimout(timeout time.Duration) Option {
+	return optionFunc(func(m *Manager) {
+		m.timeout = timeout
+	})
 }
 
 func WithRetryCount(count int) Option {
