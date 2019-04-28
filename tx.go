@@ -2,7 +2,6 @@ package tx4go
 
 import (
 	"context"
-	"fmt"
 	"github.com/google/uuid"
 	"sync"
 )
@@ -125,7 +124,6 @@ func (this *Tx) ttlHandler() {
 		select {
 		case <-this.ttlCtx.Done():
 			if this.ttlCtx.Err() == context.DeadlineExceeded {
-				fmt.Println("timeout")
 				this.ttlTx()
 			}
 			return
