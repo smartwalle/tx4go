@@ -114,6 +114,10 @@ func (this *Tx) resetTTL() {
 		this.ttlCancel = nil
 	}
 
+	if m.timeout <= 0 {
+		return
+	}
+
 	this.ttlCtx, this.ttlCancel = context.WithTimeout(context.Background(), m.timeout)
 
 	go this.ttlHandler()
