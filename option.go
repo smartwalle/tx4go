@@ -12,7 +12,7 @@ func (f optionFunc) Apply(m *Manager) {
 	f(m)
 }
 
-func WithTimout(timeout time.Duration) Option {
+func WithTimeout(timeout time.Duration) Option {
 	return optionFunc(func(m *Manager) {
 		m.timeout = timeout
 	})
