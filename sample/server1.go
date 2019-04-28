@@ -36,7 +36,7 @@ func main() {
 		})
 
 		if err != nil {
-			log4go.Infoln("tx error", err)
+			log4go.Infoln("tx error", err, tx)
 			return nil
 		}
 

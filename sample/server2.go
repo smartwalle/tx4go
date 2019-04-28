@@ -42,7 +42,7 @@ func main() {
 
 		s.Request(tx.Context(), "tx-s1", "h1", nil, nil)
 
-		tx.Commit()
+		tx.Rollback()
 		return nil
 	})
 

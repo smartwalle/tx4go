@@ -38,6 +38,9 @@ type Tx struct {
 	mu sync.Mutex
 	w  sync.WaitGroup
 
+	ttlCancel context.CancelFunc
+	ttlCtx    context.Context
+
 	txInfo         *TxInfo // 当前事务的信息
 	rootTxInfo     *TxInfo // 主事务的信息
 	tType          txType
@@ -101,6 +104,43 @@ func (this *Tx) Context() context.Context {
 }
 
 // --------------------------------------------------------------------------------
+func (this *Tx) resetTTL() {
+	if this.ttlCancel != nil {
+		this.ttlCancel()
+		this.ttlCancel = nil
+	}
+
+	this.ttlCtx, this.ttlCancel = context.WithTimeout(context.Background(), m.timeout)
+
+	go this.ttlHandler()
+}
+
+func (this *Tx) ttlHandler() {
+	for {
+		select {
+		case <-this.ttlCtx.Done():
+			if this.ttlCtx.Err() == context.DeadlineExceeded {
+				this.ttlTx()
+			}
+			return
+		}
+	}
+}
+
+func (this *Tx) ttlTx() {
+	if this.tType == txTypeBranch {
+		// 如果是分支事务，尝试向向主事务发送回滚消息
+		m.rollbackTx(this.rootTxInfo, this.txInfo)
+	} else {
+		// 如果是主事务，通知所有的分支事务，进行 cancel 操作
+		for _, tx := range this.txList {
+			m.cancelTx(tx.txInfo, this.txInfo)
+		}
+	}
+	this.cancelTx()
+}
+
+// --------------------------------------------------------------------------------
 // register 分支事务向主事务注册（分）
 func (this *Tx) register() error {
 	return m.registerTx(this.rootTxInfo, this.txInfo)
@@ -121,6 +161,9 @@ func (this *Tx) registerTx(tx *Tx) {
 	this.txList[tx.id] = tx
 
 	this.w.Add(1)
+
+	// 有新的分支事务注册，需要重置超时处理
+	this.resetTTL()
 }
 
 // --------------------------------------------------------------------------------
@@ -130,7 +173,11 @@ func (this *Tx) registerTx(tx *Tx) {
 func (this *Tx) Commit() (err error) {
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
-		return m.commitTx(this.rootTxInfo, this.txInfo)
+		if err = m.commitTx(this.rootTxInfo, this.txInfo); err == nil {
+			// 向主事务提交之后，需要重置超时处理
+			this.resetTTL()
+		}
+		return err
 	}
 
 	if this.isCancel == true || this.isConfirm == true {
@@ -183,6 +230,10 @@ func (this *Tx) cancelTx() {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
+	if this.ttlCancel != nil {
+		this.ttlCancel()
+	}
+
 	if this.cancelHandler != nil && this.isCancel == false {
 		this.cancelHandler()
 	}
@@ -196,6 +247,10 @@ func (this *Tx) cancelTx() {
 func (this *Tx) confirmTx() {
 	this.mu.Lock()
 	defer this.mu.Unlock()
+
+	if this.ttlCancel != nil {
+		this.ttlCancel()
+	}
 
 	if this.confirmHandler != nil && this.isConfirm == false {
 		this.confirmHandler()
@@ -214,7 +269,10 @@ func (this *Tx) Rollback() (err error) {
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息并直接将当前事务标记为已取消
 		this.isCancel = true
-		err = m.rollbackTx(this.rootTxInfo, this.txInfo)
+		if err = m.rollbackTx(this.rootTxInfo, this.txInfo); err == nil {
+			// 向主事务提交之后，需要重置超时处理
+			this.resetTTL()
+		}
 	} else {
 		if this.isCancel == true || this.isConfirm == true {
 			return
