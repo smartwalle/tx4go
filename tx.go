@@ -100,6 +100,10 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
 	return t, nil
 }
 
+func (this *Tx) Id() string {
+	return this.id
+}
+
 func (this *Tx) Context() context.Context {
 	return this.ctx
 }
