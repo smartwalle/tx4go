@@ -232,7 +232,7 @@ func (this *Tx) Rollback() (err error) {
 			}
 		}
 	}
-	// 上述将 isCancel 设置为 true, 是为了此方法中不再调用 cancel 回调函数
+	// 上述将 isCancel 设置为 true, 是为了在 cancelTx() 方法中不再调用 cancel 回调函数
 	this.cancelTx()
 
 	return err
