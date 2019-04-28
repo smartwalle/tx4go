@@ -248,7 +248,7 @@ func (this *Manager) confirmTxHandler(ctx context.Context, req *pks.Request, rsp
 
 	var tx = this.getTx(param.ToId)
 	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
-		return tx.confirmTx()
+		tx.confirmTx()
 	}
 
 	return nil
