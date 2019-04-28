@@ -2,6 +2,7 @@ package tx4go
 
 import (
 	"context"
+	"fmt"
 	"github.com/google/uuid"
 	"sync"
 )
@@ -120,6 +121,7 @@ func (this *Tx) ttlHandler() {
 		select {
 		case <-this.ttlCtx.Done():
 			if this.ttlCtx.Err() == context.DeadlineExceeded {
+				fmt.Println("timeout")
 				this.ttlTx()
 			}
 			return
@@ -129,14 +131,19 @@ func (this *Tx) ttlHandler() {
 
 func (this *Tx) ttlTx() {
 	if this.tType == txTypeBranch {
-		// 如果是分支事务，尝试向向主事务发送回滚消息
+		// 如果是分支事务，尝试向主事务发送回滚消息
 		m.rollbackTx(this.rootTxInfo, this.txInfo)
 	} else {
 		// 如果是主事务，通知所有的分支事务，进行 cancel 操作
 		for _, tx := range this.txList {
 			m.cancelTx(tx.txInfo, this.txInfo)
+
+			if tx.status == txStatusPending {
+				this.w.Done()
+			}
 		}
 	}
+
 	this.cancelTx()
 }
 
@@ -218,6 +225,11 @@ func (this *Tx) commitTx(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
+	// 如果已经取消或者确认之后，则不能再修改分支事务的状态
+	if this.isCancel == true || this.isConfirm == true {
+		return
+	}
+
 	var tx = this.txList[txId]
 	if tx != nil && tx.status == txStatusPending {
 		tx.status = txStatusCommit
@@ -232,6 +244,11 @@ func (this *Tx) cancelTx() {
 
 	if this.ttlCancel != nil {
 		this.ttlCancel()
+	}
+
+	// 如果是已经确认的事务，则不能再取消
+	if this.isConfirm {
+		return
 	}
 
 	if this.cancelHandler != nil && this.isCancel == false {
@@ -250,6 +267,11 @@ func (this *Tx) confirmTx() {
 
 	if this.ttlCancel != nil {
 		this.ttlCancel()
+	}
+
+	// 如果是已经取消的事务，则不能再确认
+	if this.isCancel {
+		return
 	}
 
 	if this.confirmHandler != nil && this.isConfirm == false {
@@ -274,10 +296,13 @@ func (this *Tx) Rollback() (err error) {
 			this.resetTTL()
 		}
 	} else {
+		this.mu.Lock()
 		if this.isCancel == true || this.isConfirm == true {
+			this.mu.Unlock()
 			return
 		}
 		this.isCancel = true
+		this.mu.Unlock()
 
 		// 等待所有的子事务操作完成
 		this.w.Wait()
@@ -300,6 +325,11 @@ func (this *Tx) Rollback() (err error) {
 func (this *Tx) rollbackTx(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
+
+	// 如果已经取消或者确认之后，则不能再修改分支事务的状态
+	if this.isCancel == true || this.isConfirm == true {
+		return
+	}
 
 	var tx = this.txList[txId]
 	if tx != nil && tx.status == txStatusPending {
