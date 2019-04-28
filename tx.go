@@ -263,7 +263,7 @@ func (this *Tx) cancelTx() {
 }
 
 // confirmTx 确认事务（主、分）
-func (this *Tx) confirmTx() {
+func (this *Tx) confirmTx() error {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
@@ -273,7 +273,7 @@ func (this *Tx) confirmTx() {
 
 	// 如果是已经取消的事务，则不能再确认
 	if this.isCancel {
-		return
+		return kErrNotAllowed
 	}
 
 	if this.confirmHandler != nil && this.isConfirm == false {
@@ -283,6 +283,8 @@ func (this *Tx) confirmTx() {
 	this.isConfirm = true
 
 	m.delTx(this.id)
+
+	return nil
 }
 
 // --------------------------------------------------------------------------------

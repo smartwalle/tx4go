@@ -18,7 +18,8 @@ const (
 )
 
 var (
-	kErrTxNotFound = errors.New("tx not found")
+	kErrTxNotFound = errors.New("tx: not found")
+	kErrNotAllowed = errors.New("tx: not allowed")
 )
 
 var m *Manager
@@ -247,7 +248,7 @@ func (this *Manager) confirmTxHandler(ctx context.Context, req *pks.Request, rsp
 
 	var tx = this.getTx(param.ToId)
 	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
-		tx.confirmTx()
+		return tx.confirmTx()
 	}
 
 	return nil
