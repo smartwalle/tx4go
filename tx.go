@@ -300,7 +300,7 @@ func (this *Tx) Rollback() (err error) {
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息并直接将当前事务标记为已取消
 
-		this.isCancel = true
+		//this.isCancel = true
 		if err = m.rollbackTx(this.rootTxInfo, this.txInfo); err == nil {
 			// 向主事务提交之后，需要重置超时处理
 			this.resetTTL()
@@ -309,7 +309,7 @@ func (this *Tx) Rollback() (err error) {
 		if this.isCancel == true || this.isConfirm == true {
 			return
 		}
-		this.isCancel = true
+		//this.isCancel = true
 
 		// 等待所有的子事务操作完成
 		this.w.Wait()
