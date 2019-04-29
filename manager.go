@@ -14,7 +14,7 @@ import (
 const (
 	kDefaultRetryCount = 3
 	kDefaultRetryDelay = 256 * time.Millisecond
-	kDefaultTimeout    = 0 * time.Second
+	kDefaultTimeout    = 5 * time.Second
 )
 
 var (
@@ -25,8 +25,7 @@ var (
 var m *Manager
 
 type Manager struct {
-	mu         sync.Mutex
-	txList     map[string]*Tx
+	hub        *txHub
 	serverUUID string
 	serverName string
 	serverAddr string
@@ -38,26 +37,15 @@ type Manager struct {
 }
 
 func (this *Manager) addTx(tx *Tx) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
-	if tx != nil {
-		this.txList[tx.id] = tx
-	}
+	this.hub.addTx(tx)
 }
 
 func (this *Manager) delTx(id string) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
-	delete(this.txList, id)
+	this.hub.delTx(id)
 }
 
 func (this *Manager) getTx(id string) *Tx {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
-	return this.txList[id]
+	return this.hub.getTx(id)
 }
 
 func (this *Manager) run() {
@@ -69,7 +57,7 @@ func (this *Manager) run() {
 }
 
 // --------------------------------------------------------------------------------
-// registerTx 分支事务向主事务发起注册事务的请求
+// registerTxHandler 分支事务向主事务发起注册事务的请求
 func (this *Manager) registerTx(toTx, fromTx *TxInfo) (err error) {
 	var param = &TxReqParam{}
 	param.ToId = toTx.TxId
@@ -112,13 +100,13 @@ func (this *Manager) registerTxHandler(ctx context.Context, req *pks.Request, rs
 	bTx.txInfo.ServerName = param.FromServerName
 	bTx.txInfo.ServerAddr = param.FromServerAddr
 
-	tx.registerTx(bTx)
+	tx.registerTxHandler(bTx)
 
 	return nil
 }
 
 // --------------------------------------------------------------------------------
-// commitTx 分支事务向主事务发起提交事务的请求
+// commitTxHandler 分支事务向主事务发起提交事务的请求
 func (this *Manager) commitTx(toTx, fromTx *TxInfo) (err error) {
 	var param = &TxReqParam{}
 	param.ToId = toTx.TxId
@@ -151,13 +139,13 @@ func (this *Manager) commitTxHandler(ctx context.Context, req *pks.Request, rsp 
 		return kErrTxNotFound
 	}
 
-	tx.commitTx(param.FromId)
+	tx.commitTxHandler(param.FromId)
 
 	return nil
 }
 
 // --------------------------------------------------------------------------------
-// rollbackTx 分支事务向主事务发起回滚事务的请求
+// rollbackTxHandler 分支事务向主事务发起回滚事务的请求
 func (this *Manager) rollbackTx(toTx, fromTx *TxInfo) (err error) {
 	var param = &TxReqParam{}
 	param.ToId = toTx.TxId
@@ -190,7 +178,7 @@ func (this *Manager) rollbackTxHandler(ctx context.Context, req *pks.Request, rs
 		return kErrTxNotFound
 	}
 
-	tx.rollbackTx(param.FromId)
+	tx.rollbackTxHandler(param.FromId)
 
 	return nil
 }
@@ -218,7 +206,7 @@ func (this *Manager) cancelTxHandler(ctx context.Context, req *pks.Request, rsp 
 
 	var tx = this.getTx(param.ToId)
 	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
-		tx.cancelTx()
+		tx.cancelTxHandler()
 	}
 
 	return nil
@@ -248,7 +236,7 @@ func (this *Manager) confirmTxHandler(ctx context.Context, req *pks.Request, rsp
 
 	var tx = this.getTx(param.ToId)
 	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
-		tx.confirmTx()
+		tx.confirmTxHandler()
 	}
 
 	return nil
@@ -279,7 +267,7 @@ var initOnce sync.Once
 func Init(s *pks.Service, opts ...Option) {
 	initOnce.Do(func() {
 		m = &Manager{}
-		m.txList = make(map[string]*Tx)
+		m.hub = newTxHub()
 		m.service = s
 		m.serverUUID = uuid.New().String()
 		m.serverName = s.ServerName()
