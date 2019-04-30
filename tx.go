@@ -173,9 +173,7 @@ func (this *Tx) registerTxHandler(tx *Tx) {
 	}
 	this.hub.addTx(tx)
 
-	if tx != nil {
-		this.w.Add(1)
-	}
+	this.w.Add(1)
 
 	// 有新的分支事务注册，需要重置超时处理
 	this.resetTTL()
