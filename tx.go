@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/google/uuid"
 	"sync"
+	"time"
 )
 
 // --------------------------------------------------------------------------------
@@ -26,10 +27,11 @@ const (
 // --------------------------------------------------------------------------------
 // TxInfo 事务基本信息
 type TxInfo struct {
-	TxId       string `json:"tx_id"`       // 事务 id
-	ServerName string `json:"server_name"` // 事务服务名称
-	ServerAddr string `json:"server_addr"` // 事务服务地址
-	ServerUUID string `json:"server_uuid"` // 事务服务uuid
+	TxId       string    `json:"tx_id"`       // 事务 id
+	ServerName string    `json:"server_name"` // 事务服务名称
+	ServerAddr string    `json:"server_addr"` // 事务服务地址
+	ServerUUID string    `json:"server_uuid"` // 事务服务uuid
+	TTL        time.Time `json:"ttl"`         // 事务超时时间
 }
 
 // --------------------------------------------------------------------------------
@@ -72,12 +74,18 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 		rootTxInfo = txInfoWithContext(t.ctx)
 	}
 
+	var ttl time.Time
+	if m.timeout > 0 {
+		ttl = time.Now().Add(m.timeout)
+	}
+
 	// 构建当前事务的信息
 	t.txInfo = &TxInfo{}
 	t.txInfo.TxId = t.id
 	t.txInfo.ServerName = m.serverName
 	t.txInfo.ServerAddr = m.serverAddr
 	t.txInfo.ServerUUID = m.serverUUID
+	t.txInfo.TTL = ttl
 
 	if rootTxInfo == nil {
 		// 如果 rootTxInfo 为空，则表示当前事务为主事务
@@ -91,6 +99,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 
 		// 构建当前事务的主事务信息
 		t.rootTxInfo = rootTxInfo
+		t.txInfo.TTL = rootTxInfo.TTL
 
 		// 发消息告知主事务，有分支事务建立
 		if err := t.register(); err != nil {
@@ -119,11 +128,11 @@ func (this *Tx) resetTTL() {
 		this.ttlCancel = nil
 	}
 
-	if m.timeout <= 0 {
+	if this.txInfo.TTL.IsZero() {
 		return
 	}
 
-	this.ttlCtx, this.ttlCancel = context.WithTimeout(context.Background(), m.timeout)
+	this.ttlCtx, this.ttlCancel = context.WithDeadline(context.Background(), this.txInfo.TTL)
 
 	go this.ttlHandler()
 }
@@ -142,6 +151,7 @@ func (this *Tx) ttlHandler() {
 
 func (this *Tx) ttlTx() {
 	this.ttlCancel = nil
+	this.ttlCtx = nil
 
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，尝试向主事务发送回滚消息
