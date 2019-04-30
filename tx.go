@@ -55,7 +55,11 @@ type Tx struct {
 	isCancel  bool
 }
 
-func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
+func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Context, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var t = &Tx{}
 	t.id = uuid.New().String()
 	t.ctx = ctx
@@ -90,14 +94,14 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, error) {
 
 		// 发消息告知主事务，有分支事务建立
 		if err := t.register(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	// 添加事务到管理器中
 	m.addTx(t)
 
-	return t, nil
+	return t, t.Context(), nil
 }
 
 func (this *Tx) Id() string {

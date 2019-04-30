@@ -29,7 +29,7 @@ func main() {
 	s.Handle("h1", func(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
 		log4go.Infof("-----收到来自 %s 的请求-----\n", req.FromService())
 
-		tx, err := tx4go.Begin(ctx, func() {
+		tx, ctx, err := tx4go.Begin(ctx, func() {
 			log4go.Println("confirm")
 		}, func() {
 			log4go.Errorln("cancel")

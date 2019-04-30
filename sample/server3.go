@@ -28,19 +28,21 @@ func main() {
 
 	time.AfterFunc(time.Second*2, func() {
 		for i := 0; i < 1; i++ {
-
-			var ctx = context.Background()
-
-			var tx, _ = tx4go.Begin(ctx, func() {
+			tx, ctx, err := tx4go.Begin(context.Background(), func() {
 				log4go.Println("confirm")
 			}, func() {
 				log4go.Errorln("cancel")
 			})
 
-			s.Request(tx.Context(), "tx-s2", "h2", nil, nil)
+			if err != nil {
+				log4go.Errorln("tx error", err)
+				return
+			}
+
+			s.Request(ctx, "tx-s2", "h2", nil, nil)
 
 			if i%2 == 0 {
-				tx.Commit()
+				tx.Rollback()
 			} else {
 				tx.Rollback()
 			}
