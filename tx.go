@@ -2,6 +2,7 @@ package tx4go
 
 import (
 	"context"
+	"fmt"
 	"github.com/google/uuid"
 	"sync"
 	"time"
@@ -117,6 +118,13 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 }
 
 func (this *Tx) Id() string {
+	return this.id
+}
+
+func (this *Tx) IdPath() string {
+	if this.tType == txTypeBranch {
+		return fmt.Sprintf("%s - %s", this.rootTxInfo.TxId, this.id)
+	}
 	return this.id
 }
 
