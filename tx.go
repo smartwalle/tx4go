@@ -165,14 +165,8 @@ func (this *Tx) ttlHandler() {
 	this.ttlCtx = nil
 	this.status = txStatusPendingCancel
 
-	if this.tType == txTypeBranch {
-		// 如果是分支事务，尝试向主事务发送超时消息
-		m.timeoutTx(this.rootTxInfo, this.txInfo)
-	} else {
-		// 如果是主事务，尝试向分支事务发送超时消息
+	if this.tType == txTypeRoot {
 		for _, tx := range this.hub.getTxList() {
-			m.timeoutTx(tx.txInfo, this.txInfo)
-
 			if tx.status == txStatusPending {
 				this.w.Done()
 			}
@@ -269,7 +263,7 @@ func (this *Tx) Commit() (err error) {
 	return err
 }
 
-// commitTxHandler 分支事务提交之后，主事务将其维护的分支事务的状态标记为提交（主）
+// commitTxHandler 分支事务提交之后，主事务将其维护的分支事务的状态标记为等待提交（主）
 func (this *Tx) commitTxHandler(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -406,7 +400,7 @@ func (this *Tx) Rollback() (err error) {
 	return err
 }
 
-// rollbackTxHandler 分支事务回滚之后，主事务将其维护的分支事务的状态标记为回滚（主）
+// rollbackTxHandler 分支事务回滚之后，主事务将其维护的分支事务的状态标记为等待取消（主）
 func (this *Tx) rollbackTxHandler(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
@@ -420,34 +414,5 @@ func (this *Tx) rollbackTxHandler(txId string) {
 	if tx != nil && tx.status == txStatusPending {
 		tx.status = txStatusPendingCancel
 		this.w.Done()
-	}
-}
-
-// --------------------------------------------------------------------------------
-func (this *Tx) timeoutTxHandler(txId string) {
-	this.mu.Lock()
-	defer this.mu.Unlock()
-
-	// 已经取消和确认的事务不能再进行操作
-	if this.status == txStatusCancel || this.status == txStatusConfirm {
-		return
-	}
-
-	// 如果是分支事务收到主事务的超时消息，则进行 cancel 操作
-	if this.tType == txTypeBranch {
-		this.status = txStatusPendingCancel
-		this.cancelTx()
-		return
-	}
-
-	// 如果是主事务收到分支事务的超时消息，则改变分支事务的状态
-	var tx = this.hub.getTx(txId)
-	if tx != nil {
-		var oldStatus = tx.status
-		tx.status = txStatusPendingCancel
-
-		if oldStatus == txStatusPending {
-			this.w.Done()
-		}
 	}
 }

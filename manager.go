@@ -54,7 +54,6 @@ func (this *Manager) run() {
 	this.service.Handle(getRollbackTxPath(this.serverUUID), this.rollbackTxHandler)
 	this.service.Handle(getCancelTxPath(this.serverUUID), this.cancelTxHandler)
 	this.service.Handle(getConfirmTxPath(this.serverUUID), this.confirmTxHandler)
-	this.service.Handle(getTimeoutTxPath(this.serverUUID), this.confirmTxHandler)
 }
 
 // --------------------------------------------------------------------------------
@@ -244,40 +243,6 @@ func (this *Manager) confirmTxHandler(ctx context.Context, req *pks.Request, rsp
 }
 
 // --------------------------------------------------------------------------------
-func (this *Manager) timeoutTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
-
-	_, err = this.request(context.Background(), toTx.ServerAddr, getTimeoutTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (this *Manager) timeoutTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
-	}
-
-	if param == nil {
-		return kErrTxNotFound
-	}
-
-	var tx = this.getTx(param.ToId)
-	if tx == nil {
-		return kErrTxNotFound
-	}
-
-	tx.timeoutTxHandler(param.FromId)
-
-	return nil
-}
-
-// --------------------------------------------------------------------------------
 func (this *Manager) request(ctx context.Context, address, path string, param interface{}) (rsp *pks.Response, err error) {
 	paramBytes, err := json.Marshal(param)
 	if err != nil {
@@ -339,10 +304,6 @@ func getCancelTxPath(serverUUID string) string {
 
 func getConfirmTxPath(serverUUID string) string {
 	return fmt.Sprintf("tx-%s-confirm", serverUUID)
-}
-
-func getTimeoutTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-timeout", serverUUID)
 }
 
 // --------------------------------------------------------------------------------

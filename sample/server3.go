@@ -44,7 +44,7 @@ func main() {
 			s.Request(ctx, "tx-s2", "h2", nil, nil)
 
 			if i%2 == 0 {
-				tx.Commit()
+				//tx.Commit()
 			} else {
 				tx.Rollback()
 			}
