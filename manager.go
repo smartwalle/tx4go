@@ -14,7 +14,7 @@ import (
 const (
 	kDefaultRetryCount = 3
 	kDefaultRetryDelay = 256 * time.Millisecond
-	kDefaultTimeout    = 5 * time.Second
+	kDefaultTimeout    = 15 * time.Second
 )
 
 var (
