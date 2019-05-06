@@ -101,7 +101,9 @@ func (this *Manager) registerTxHandler(ctx context.Context, req *pks.Request, rs
 	bTx.txInfo.ServerName = param.FromServerName
 	bTx.txInfo.ServerAddr = param.FromServerAddr
 
-	tx.registerTxHandler(bTx)
+	if ok := tx.registerTxHandler(bTx); ok == false {
+		return kErrNotAllowed
+	}
 
 	return nil
 }

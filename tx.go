@@ -111,6 +111,8 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	// 添加事务到管理器中
 	m.addTx(t)
 
+	logger.Printf("创建事务 %s 成功 \n", t.idPath())
+
 	// 启动超时处理
 	t.setupTTL()
 
@@ -121,7 +123,7 @@ func (this *Tx) Id() string {
 	return this.id
 }
 
-func (this *Tx) IdPath() string {
+func (this *Tx) idPath() string {
 	if this.tType == txTypeBranch {
 		return fmt.Sprintf("%s - %s", this.rootTxInfo.TxId, this.id)
 	}
@@ -144,6 +146,8 @@ func (this *Tx) setupTTL() {
 	}
 
 	this.ttlCtx, this.ttlCancel = context.WithDeadline(context.Background(), this.txInfo.TTL)
+
+	logger.Printf("事务 %s 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
 
 	go this.runTTL()
 }
@@ -173,6 +177,8 @@ func (this *Tx) ttlHandler() {
 	this.ttlCtx = nil
 	this.status = txStatusPendingCancel
 
+	logger.Printf("事务 %s 超时, 将执行 cancel 操作 \n", this.idPath())
+
 	if this.tType == txTypeRoot {
 		for _, tx := range this.hub.getTxList() {
 
@@ -193,20 +199,26 @@ func (this *Tx) ttlHandler() {
 // --------------------------------------------------------------------------------
 // register 分支事务向主事务注册（分）
 func (this *Tx) register() error {
-	return m.registerTx(this.rootTxInfo, this.txInfo)
+	if err := m.registerTx(this.rootTxInfo, this.txInfo); err != nil {
+		logger.Printf("向事务 %s 注册分支事务失败, 错误信息为: %s \n", this.rootTxInfo.TxId, err)
+		return err
+	}
+	return nil
 }
 
 // registerTxHandler 分支事务向主事务发起注册消息之后，主事务添加分支事务信息（主）
-func (this *Tx) registerTxHandler(tx *Tx) {
+func (this *Tx) registerTxHandler(tx *Tx) bool {
 	this.mu.Lock()
 	defer this.mu.Unlock()
 
-	if tx.status != txStatusPending {
-		return
+	if this.tType != txTypeRoot {
+		logger.Printf("事务 %s 为分支事务, 不能注册分支事务 \n", this.id)
+		return false
 	}
 
-	if tx == nil {
-		return
+	if this.status != txStatusPending {
+		logger.Printf("事务 %s 的状态为 %d 不能注册分支事务 \n", this.id, this.status)
+		return false
 	}
 
 	if this.hub == nil {
@@ -215,6 +227,10 @@ func (this *Tx) registerTxHandler(tx *Tx) {
 	this.hub.addTx(tx)
 
 	this.w.Add(1)
+
+	logger.Printf("事务 %s 注册分支事务 %s 成功 \n", this.id, tx.id)
+
+	return true
 }
 
 // --------------------------------------------------------------------------------
@@ -230,8 +246,10 @@ func (this *Tx) Commit() (err error) {
 		// 如果是分支事务，则向主事务发送消息
 		if err = m.commitTx(this.rootTxInfo, this.txInfo); err == nil {
 			this.status = txStatusPendingConfirm
+			logger.Printf("事务 %s commit 成功 \n", this.idPath())
 		} else {
 			this.status = txStatusPendingCancel
+			logger.Printf("事务 %s commit 失败, 错误信息为: %s \n", this.idPath(), err)
 		}
 	} else {
 		// 等待所有的分支事务操作完成
@@ -244,6 +262,8 @@ func (this *Tx) Commit() (err error) {
 			return
 		}
 
+		logger.Printf("事务 %s 开始处理 commit \n", this.id)
+
 		var txList = this.hub.getTxList()
 
 		// 检查分支事务的状态，如果有状态不为 commit 的，则进行 cancel 操作，否则进行 confirm 操作
@@ -251,6 +271,7 @@ func (this *Tx) Commit() (err error) {
 		for _, tx := range txList {
 			if tx.status != txStatusPendingConfirm {
 				shouldCancel = true
+				logger.Printf("事务 %s - %s 的状态为 %d, 本次事务不能执行 confirm 操作 \n", this.id, tx.id, tx.status)
 				break
 			}
 		}
@@ -259,6 +280,7 @@ func (this *Tx) Commit() (err error) {
 
 		if shouldCancel {
 			// 通知所有的分支事务，进行 cancel 操作
+			logger.Printf("事务 %s 有分支事务不能 confirm, 将通知所有的分支事务执行 cancel 操作 \n", this.id)
 			for _, tx := range txList {
 				m.cancelTx(tx.txInfo, this.txInfo)
 			}
@@ -266,6 +288,7 @@ func (this *Tx) Commit() (err error) {
 			this.cancelTx()
 		} else {
 			// 通知所有的分支事务，进行 confirm 操作
+			logger.Printf("事务 %s 可以 confirm, 将通知所有的分支事务执行 confirm 操作 \n", this.id)
 			for _, tx := range txList {
 				m.confirmTx(tx.txInfo, this.txInfo)
 			}
@@ -285,8 +308,11 @@ func (this *Tx) commitTxHandler(txId string) {
 
 	// 已经取消和确认的事务不能再进行操作
 	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		logger.Printf("事务 %s 收到来自分支事务 %s 的 commit 消息, 本事务的状态为 %d, 不能执行 commit 操作 \n", this.id, txId, this.status)
 		return
 	}
+
+	logger.Printf("事务 %s 收到来自分支事务 %s 的 commit 消息 \n", this.id, txId)
 
 	var tx = this.hub.getTx(txId)
 	if tx != nil && tx.status == txStatusPending {
@@ -303,8 +329,11 @@ func (this *Tx) cancelTxHandler() {
 
 	// 已经取消和确认的事务不能再进行操作
 	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		logger.Printf("事务 %s 收到 cancel 消息, 其状态为 %d, 不能执行 cancel 操作 \n", this.idPath(), this.status)
 		return
 	}
+
+	logger.Printf("事务 %s 收到 cancel 消息, 将执行 cancel 操作 \n", this.idPath())
 
 	// 分支事务收到主事务的 cancel 消息之后，将本事务的状态标记为 pending cancel
 	this.status = txStatusPendingCancel
@@ -326,6 +355,8 @@ func (this *Tx) cancelTx() {
 		this.cancelHandler()
 	}
 
+	logger.Printf("事务 %s 执行 cancel 操作成功 \n", this.idPath())
+
 	this.status = txStatusCancel
 
 	m.delTx(this.id)
@@ -339,8 +370,11 @@ func (this *Tx) confirmTxHandler() {
 
 	// 已经取消和确认的事务不能再进行操作
 	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		logger.Printf("事务 %s 收到 confirm 消息, 其状态为 %d, 不能执行 confirm 操作 \n", this.idPath(), this.status)
 		return
 	}
+
+	logger.Printf("事务 %s 收到 confirm 消息, 将执行 confirm 操作 \n", this.idPath())
 
 	// 分支事务收到主事务的 confirm 消息之后，将本事务的状态标记为 pending confirm
 	this.status = txStatusPendingConfirm
@@ -362,6 +396,8 @@ func (this *Tx) confirmTx() {
 		this.confirmHandler()
 	}
 
+	logger.Printf("事务 %s 执行 confirm 操作成功 \n", this.idPath())
+
 	this.status = txStatusConfirm
 
 	m.delTx(this.id)
@@ -382,7 +418,11 @@ func (this *Tx) Rollback() (err error) {
 			return
 		}
 
-		err = m.rollbackTx(this.rootTxInfo, this.txInfo)
+		if err = m.rollbackTx(this.rootTxInfo, this.txInfo); err == nil {
+			logger.Printf("事务 %s rollback 成功 \n", this.idPath())
+		} else {
+			logger.Printf("事务 %s rollback 失败, 错误信息为: %s \n", this.idPath(), err)
+		}
 	} else {
 		// 主事务
 
@@ -395,6 +435,8 @@ func (this *Tx) Rollback() (err error) {
 		if this.status != txStatusPending {
 			return
 		}
+
+		logger.Printf("事务 %s 开始处理 rollback \n", this.id)
 
 		var txList = this.hub.getTxList()
 
@@ -422,8 +464,11 @@ func (this *Tx) rollbackTxHandler(txId string) {
 
 	// 已经取消和确认的事务不能再进行操作
 	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		logger.Printf("事务 %s 收到 rollback 消息, 其状态为 %d, 不能执行 rollback 操作 \n", this.id, this.status)
 		return
 	}
+
+	logger.Printf("事务 %s 收到 rollback 消息, 将执行 rollback 操作 \n", this.id)
 
 	var tx = this.hub.getTx(txId)
 	if tx != nil && tx.status == txStatusPending {
@@ -439,8 +484,11 @@ func (this *Tx) timeoutTxHandler(txId string) {
 
 	// 已经取消和确认的事务不能再进行操作
 	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		logger.Printf("事务 %s 收到 timeout 消息, 其状态为 %d, 不能执行 cancel 操作 \n", this.idPath(), this.status)
 		return
 	}
+
+	logger.Printf("事务 %s 收到 timeout 消息, 将执行 cancel 操作 \n", this.idPath())
 
 	// 如果是分支事务收到主事务的超时消息，则进行 cancel 操作
 	if this.tType == txTypeBranch {
