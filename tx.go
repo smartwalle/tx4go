@@ -167,10 +167,15 @@ func (this *Tx) ttlHandler() {
 
 	if this.tType == txTypeRoot {
 		for _, tx := range this.hub.getTxList() {
+
+			go m.timeoutTx(tx.txInfo, this.txInfo)
+
 			if tx.status == txStatusPending {
 				this.w.Done()
 			}
 		}
+	} else {
+		go m.timeoutTx(this.rootTxInfo, this.txInfo)
 	}
 
 	// 事务自身进行 cancel 操作
@@ -221,7 +226,7 @@ func (this *Tx) Commit() (err error) {
 			this.status = txStatusPendingCancel
 		}
 	} else {
-		// 等待所有的子事务操作完成
+		// 等待所有的分支事务操作完成
 		this.w.Wait()
 
 		this.mu.Lock()
@@ -233,7 +238,7 @@ func (this *Tx) Commit() (err error) {
 
 		var txList = this.hub.getTxList()
 
-		// 检查子事务的状态，如果有状态不为 commit 的，则进行 cancel 操作，否则进行 confirm 操作
+		// 检查分支事务的状态，如果有状态不为 commit 的，则进行 cancel 操作，否则进行 confirm 操作
 		var shouldCancel = false
 		for _, tx := range txList {
 			if tx.status != txStatusPendingConfirm {
@@ -241,6 +246,8 @@ func (this *Tx) Commit() (err error) {
 				break
 			}
 		}
+
+		// TODO 验证分支事务是否活跃
 
 		if shouldCancel {
 			// 通知所有的分支事务，进行 cancel 操作
@@ -371,7 +378,7 @@ func (this *Tx) Rollback() (err error) {
 	} else {
 		// 主事务
 
-		// 等待所有的子事务操作完成
+		// 等待所有的分支事务操作完成
 		this.w.Wait()
 
 		this.mu.Lock()
@@ -414,5 +421,34 @@ func (this *Tx) rollbackTxHandler(txId string) {
 	if tx != nil && tx.status == txStatusPending {
 		tx.status = txStatusPendingCancel
 		this.w.Done()
+	}
+}
+
+// --------------------------------------------------------------------------------
+func (this *Tx) timeoutTxHandler(txId string) {
+	this.mu.Lock()
+	defer this.mu.Unlock()
+
+	// 已经取消和确认的事务不能再进行操作
+	if this.status == txStatusCancel || this.status == txStatusConfirm {
+		return
+	}
+
+	// 如果是分支事务收到主事务的超时消息，则进行 cancel 操作
+	if this.tType == txTypeBranch {
+		this.status = txStatusPendingCancel
+		this.cancelTx()
+		return
+	}
+
+	// 如果是主事务收到分支事务的超时消息，则改变分支事务的状态
+	var tx = this.hub.getTx(txId)
+	if tx != nil {
+		var oldStatus = tx.status
+		tx.status = txStatusPendingCancel
+
+		if oldStatus == txStatusPending {
+			this.w.Done()
+		}
 	}
 }
