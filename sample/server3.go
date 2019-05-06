@@ -39,6 +39,8 @@ func main() {
 				return
 			}
 
+			log4go.Println("begin")
+
 			s.Request(ctx, "tx-s2", "h2", nil, nil)
 
 			if i%2 == 0 {
