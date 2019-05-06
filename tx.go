@@ -111,7 +111,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	// 添加事务到管理器中
 	m.addTx(t)
 
-	logger.Printf("创建事务 %s 成功 \n", t.idPath())
+	logger.Printf("事务 %s 创建成功 \n", t.idPath())
 
 	// 启动超时处理
 	t.setupTTL()
@@ -200,7 +200,7 @@ func (this *Tx) ttlHandler() {
 // register 分支事务向主事务注册（分）
 func (this *Tx) register() error {
 	if err := m.registerTx(this.rootTxInfo, this.txInfo); err != nil {
-		logger.Printf("向事务 %s 注册分支事务失败, 错误信息为: %s \n", this.rootTxInfo.TxId, err)
+		logger.Printf("事务 %s 注册分支事务失败, 错误信息为: %s \n", this.rootTxInfo.TxId, err)
 		return err
 	}
 	return nil
