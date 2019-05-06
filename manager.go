@@ -287,23 +287,23 @@ func Init(s *pks.Service, opts ...Option) {
 
 // --------------------------------------------------------------------------------
 func getRegisterTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%service-register", serverUUID)
+	return fmt.Sprintf("tx-%s-register", serverUUID)
 }
 
 func getCommitTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%service-commit", serverUUID)
+	return fmt.Sprintf("tx-%s-commit", serverUUID)
 }
 
 func getRollbackTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%service-rollback", serverUUID)
+	return fmt.Sprintf("tx-%s-rollback", serverUUID)
 }
 
 func getCancelTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%service-cancel", serverUUID)
+	return fmt.Sprintf("tx-%s-cancel", serverUUID)
 }
 
 func getConfirmTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%service-confirm", serverUUID)
+	return fmt.Sprintf("tx-%s-confirm", serverUUID)
 }
 
 // --------------------------------------------------------------------------------
