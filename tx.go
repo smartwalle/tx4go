@@ -148,7 +148,7 @@ func (this *Tx) setupTTL() {
 
 	this.ttlCtx, this.ttlCancel = context.WithDeadline(context.Background(), this.txInfo.TTL)
 
-	logger.Printf("事务 %s 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
+	logger.Printf("事务 %s 添加超时检测任务成功, 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
 
 	go this.runTTL()
 }
@@ -161,7 +161,7 @@ func (this *Tx) runTTL() {
 			if err == context.DeadlineExceeded {
 				this.ttlHandler()
 			} else if err == context.Canceled {
-				logger.Printf("事务 %s 取消超时检测 \n", this.idPath())
+				logger.Printf("事务 %s 取消超时检测任务 \n", this.idPath())
 			}
 			return
 		}
