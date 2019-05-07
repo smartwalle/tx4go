@@ -70,6 +70,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.id = uuid.New().String()
 	t.ctx = ctx
 	t.status = txStatusPending
+	t.hub = newTxHub()
 
 	t.confirmHandler = confirm
 	t.cancelHandler = cancel
@@ -97,7 +98,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 		t.tType = txTypeRoot
 
 		// 将当前事务的信息放置到 ctx 中
-		t.ctx = m.codec.Encode(ctx, t.txInfo)
+		t.ctx = m.codec.Encode(t.ctx, t.txInfo)
 	} else {
 		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
 		t.tType = txTypeBranch

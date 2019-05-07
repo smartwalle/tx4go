@@ -322,7 +322,7 @@ func Init(s *pks.Service, opts ...Option) {
 		}
 
 		if m.codec == nil {
-			m.codec = &DefaultCodec{}
+			m.codec = &MicroCodec{}
 		}
 
 		m.run()
