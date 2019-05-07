@@ -18,13 +18,15 @@ const (
 )
 
 var (
-	kErrTxNotFound = errors.New("tx: not found")
-	kErrNotAllowed = errors.New("tx: not allowed")
+	kErrTxNotFound           = errors.New("tx4go: not found")
+	kErrNotAllowed           = errors.New("tx4go: not allowed")
+	kErrUninitializedManager = errors.New("tx4go: uninitialized tx manager")
 )
 
 var m *Manager
 
 type Manager struct {
+	isInit     bool
 	hub        *txHub
 	serverUUID string
 	serverName string
@@ -319,6 +321,10 @@ func Init(s *pks.Service, opts ...Option) {
 		}
 
 		m.run()
+
+		m.isInit = true
+
+		logger.Printf("初始化事务管理器 %s 成功 \n", m.serverUUID)
 	})
 }
 

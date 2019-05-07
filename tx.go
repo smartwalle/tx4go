@@ -58,6 +58,10 @@ type Tx struct {
 }
 
 func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Context, error) {
+	if m.isInit == false {
+		return nil, ctx, kErrUninitializedManager
+	}
+
 	if ctx == nil {
 		ctx = context.Background()
 	}
