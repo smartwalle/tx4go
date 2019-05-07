@@ -76,7 +76,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 
 	var rootTxInfo *TxInfo
 	if t.ctx != nil {
-		rootTxInfo = txInfoWithContext(t.ctx)
+		rootTxInfo = m.codec.Decode(t.ctx)
 	}
 
 	var ttl time.Time
@@ -97,7 +97,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 		t.tType = txTypeRoot
 
 		// 将当前事务的信息放置到 ctx 中
-		t.ctx = txInfoToContext(ctx, t.txInfo)
+		t.ctx = m.codec.Encode(ctx, t.txInfo)
 	} else {
 		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
 		t.tType = txTypeBranch
