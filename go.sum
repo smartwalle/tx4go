@@ -471,8 +471,8 @@ github.com/shurcooL/users v0.0.0-20180125191416-49c67e49c537/go.mod h1:QJTqeLYED
 github.com/shurcooL/webdavfs v0.0.0-20170829043945-18c3829fa133/go.mod h1:hKmq5kWdCj2z2KEozexVbfEZIWiTjhE0+UjmZgPqehw=
 github.com/sirupsen/logrus v1.0.6/go.mod h1:pMByvHTf9Beacp5x1UXfOR9xyW/9antXMhjMPG0dEzc=
 github.com/sirupsen/logrus v1.2.0/go.mod h1:LxeOpSwHxABJmUn/MG1IvRgCAasNZTLOkJPxbbu5VWo=
-github.com/smartwalle/pks v1.0.0 h1:GteO/O4VQ9w+V8ac/aan5UIolFBQKQdJS3ckwzawbLg=
-github.com/smartwalle/pks v1.0.0/go.mod h1:wh9D8x6+odNrZfgLNO43Vm8YBwASg+KJcXftuVZjbs8=
+github.com/smartwalle/pks v1.0.0 h1:XIgo5b8kN5HTTfjBixXxfYL43mmqQcbMUrO3MmRdEKI=
+github.com/smartwalle/pks v1.0.0/go.mod h1:gHFzWb2L9LVZazQ8BRNei+MkISgQKimtVFUSWpZPnn8=
 github.com/smartwalle/xid v1.0.0 h1:v8KXCzFdcWRHS/wBjjELXybWLxiTRo1ezzpzEuONbKM=
 github.com/smartwalle/xid v1.0.0/go.mod h1:zUe+B9M8IClU9Jj0HoZATmaX14TkP2L7L3ogF+UlhWk=
 github.com/smartystreets/assertions v0.0.0-20180820201707-7c9eb446e3cf/go.mod h1:OnSkiWE9lh6wB0YB77sQom3nweQdgAjqCqsofrRNTgc=
