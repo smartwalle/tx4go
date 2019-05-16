@@ -75,11 +75,6 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.confirmHandler = confirm
 	t.cancelHandler = cancel
 
-	var rootTxInfo *TxInfo
-	if t.ctx != nil {
-		rootTxInfo = m.codec.Decode(t.ctx)
-	}
-
 	var ttl time.Time
 	if m.timeout > 0 {
 		ttl = time.Now().Add(m.timeout)
@@ -93,6 +88,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.txInfo.ServerUUID = m.serverUUID
 	t.txInfo.TTL = ttl
 
+	var rootTxInfo = m.codec.Decode(t.ctx)
 	if rootTxInfo == nil {
 		// 如果 rootTxInfo 为空，则表示当前事务为主事务
 		t.tType = txTypeRoot
@@ -121,7 +117,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	// 启动超时处理
 	t.setupTTL()
 
-	return t, t.Context(), nil
+	return t, t.ctx, nil
 }
 
 func (this *Tx) Id() string {
@@ -133,10 +129,6 @@ func (this *Tx) idPath() string {
 		return fmt.Sprintf("%s - %s", this.rootTxInfo.TxId, this.id)
 	}
 	return this.id
-}
-
-func (this *Tx) Context() context.Context {
-	return this.ctx
 }
 
 // --------------------------------------------------------------------------------
