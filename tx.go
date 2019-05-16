@@ -88,7 +88,11 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.txInfo.ServerUUID = m.serverUUID
 	t.txInfo.TTL = ttl
 
-	var rootTxInfo = m.codec.Decode(t.ctx)
+	var rootTxInfo, err = m.codec.Decode(t.ctx)
+	if err != nil {
+		return nil, ctx, err
+	}
+
 	if rootTxInfo == nil {
 		// 如果 rootTxInfo 为空，则表示当前事务为主事务
 		t.tType = txTypeRoot

@@ -10,7 +10,7 @@ import (
 type Codec interface {
 	Encode(ctx context.Context, info *TxInfo) context.Context
 
-	Decode(ctx context.Context) *TxInfo
+	Decode(ctx context.Context) (*TxInfo, error)
 }
 
 const (
@@ -29,30 +29,30 @@ func (this *MicroCodec) Encode(ctx context.Context, info *TxInfo) context.Contex
 	if err != nil {
 		return ctx
 	}
-	md, _ := mm.FromContext(ctx)
-	if md == nil {
+	md, ok := mm.FromContext(ctx)
+	if ok == false {
 		md = mm.Metadata{}
 	}
 	md[kTxInfo] = string(infoBytes)
 	return mm.NewContext(ctx, md)
 }
 
-func (this *MicroCodec) Decode(ctx context.Context) *TxInfo {
+func (this *MicroCodec) Decode(ctx context.Context) (*TxInfo, error) {
 	md, ok := mm.FromContext(ctx)
 	if ok == false {
-		return nil
+		return nil, nil
 	}
 
 	infoStr, ok := md[kTxInfo]
 	if ok == false {
-		return nil
+		return nil, nil
 	}
 
 	var info *TxInfo
 	if err := json.Unmarshal([]byte(infoStr), &info); err != nil {
-		return nil
+		return nil, err
 	}
-	return info
+	return info, nil
 }
 
 // --------------------------------------------------------------------------------
@@ -67,8 +67,8 @@ func (this *GRPCCodec) Encode(ctx context.Context, info *TxInfo) context.Context
 	if err != nil {
 		return ctx
 	}
-	md, _ := gm.FromIncomingContext(ctx)
-	if md == nil {
+	md, ok := gm.FromIncomingContext(ctx)
+	if ok == false {
 		md = gm.New(nil)
 	}
 
@@ -82,25 +82,25 @@ func (this *GRPCCodec) Encode(ctx context.Context, info *TxInfo) context.Context
 	return gm.NewOutgoingContext(ctx, md)
 }
 
-func (this *GRPCCodec) Decode(ctx context.Context) *TxInfo {
+func (this *GRPCCodec) Decode(ctx context.Context) (*TxInfo, error) {
 	md, ok := gm.FromIncomingContext(ctx)
 	if ok == false {
-		return nil
+		return nil, nil
 	}
 
 	infoStrs, ok := md[kTxInfo]
 	if ok == false {
-		return nil
+		return nil, nil
 	}
 
 	if len(infoStrs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var info *TxInfo
 	if err := json.Unmarshal([]byte(infoStrs[0]), &info); err != nil {
-		return nil
+		return nil, err
 	}
 
-	return info
+	return info, nil
 }
