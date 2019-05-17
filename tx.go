@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/opentracing/opentracing-go"
 	"sync"
 	"time"
 )
@@ -68,7 +69,6 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 
 	var t = &Tx{}
 	t.id = uuid.New().String()
-	t.ctx = ctx
 	t.status = txStatusPending
 	t.hub = newTxHub()
 
@@ -88,10 +88,15 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.txInfo.ServerUUID = m.serverUUID
 	t.txInfo.TTL = ttl
 
-	var rootTxInfo, err = m.codec.Decode(t.ctx)
+	var rootTxInfo, err = m.codec.Decode(ctx)
 	if err != nil {
 		return nil, ctx, err
 	}
+
+	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("%s.Tx.Begin", m.serverName))
+	span.Finish()
+
+	t.ctx = ctx
 
 	if rootTxInfo == nil {
 		// 如果 rootTxInfo 为空，则表示当前事务为主事务
@@ -108,7 +113,7 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 		t.txInfo.TTL = rootTxInfo.TTL
 
 		// 发消息告知主事务，有分支事务建立
-		if err := t.register(); err != nil {
+		if err := t.register(ctx); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -147,7 +152,7 @@ func (this *Tx) setupTTL() {
 		return
 	}
 
-	this.ttlCtx, this.ttlCancel = context.WithDeadline(context.Background(), this.txInfo.TTL)
+	this.ttlCtx, this.ttlCancel = context.WithDeadline(this.ctx, this.txInfo.TTL)
 
 	logger.Printf("事务 %s 添加超时检测任务成功, 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
 
@@ -187,14 +192,14 @@ func (this *Tx) ttlHandler() {
 	if this.tType == txTypeRoot {
 		for _, tx := range this.hub.getTxList() {
 
-			go m.timeoutTx(context.Background(), tx.txInfo, this.txInfo)
+			go m.timeoutTx(this.ctx, tx.txInfo, this.txInfo)
 
 			if tx.status == txStatusPending {
 				this.w.Done()
 			}
 		}
 	} else {
-		go m.timeoutTx(context.Background(), this.rootTxInfo, this.txInfo)
+		go m.timeoutTx(this.ctx, this.rootTxInfo, this.txInfo)
 	}
 
 	// 事务自身进行 cancel 操作
@@ -203,8 +208,8 @@ func (this *Tx) ttlHandler() {
 
 // --------------------------------------------------------------------------------
 // register 分支事务向主事务注册（分）
-func (this *Tx) register() error {
-	if err := m.registerTx(context.Background(), this.rootTxInfo, this.txInfo); err != nil {
+func (this *Tx) register(ctx context.Context) error {
+	if err := m.registerTx(ctx, this.rootTxInfo, this.txInfo); err != nil {
 		logger.Printf("事务 %s 注册分支事务失败, 错误信息为: %s \n", this.rootTxInfo.TxId, err)
 		return err
 	}
@@ -249,7 +254,7 @@ func (this *Tx) Commit() (err error) {
 
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
-		if err = m.commitTx(context.Background(), this.rootTxInfo, this.txInfo); err == nil {
+		if err = m.commitTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
 			this.status = txStatusPendingConfirm
 			logger.Printf("事务 %s 发送 commit 消息成功 \n", this.idPath())
 		} else {
@@ -288,7 +293,7 @@ func (this *Tx) Commit() (err error) {
 			// 通知所有的分支事务，进行 cancel 操作
 			logger.Printf("事务 %s 有分支事务不能 confirm, 将通知所有的分支事务执行 cancel 操作 \n", this.id)
 			for _, tx := range txList {
-				if err := m.cancelTx(context.Background(), tx.txInfo, this.txInfo); err != nil {
+				if err := m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 cancel 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}
@@ -298,7 +303,7 @@ func (this *Tx) Commit() (err error) {
 			// 通知所有的分支事务，进行 confirm 操作
 			logger.Printf("事务 %s 可以执行 confirm 操作, 将通知所有的分支事务执行 confirm 操作 \n", this.id)
 			for _, tx := range txList {
-				if err := m.confirmTx(context.Background(), tx.txInfo, this.txInfo); err != nil {
+				if err := m.confirmTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 confirm 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}
@@ -431,7 +436,7 @@ func (this *Tx) Rollback() (err error) {
 			return
 		}
 
-		if err = m.rollbackTx(context.Background(), this.rootTxInfo, this.txInfo); err == nil {
+		if err = m.rollbackTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
 			logger.Printf("事务 %s 发送 rollback 消息成功 \n", this.idPath())
 		} else {
 			logger.Printf("事务 %s 发送 rollback 消息失败, 错误信息为: %s \n", this.idPath(), err)
@@ -458,7 +463,7 @@ func (this *Tx) Rollback() (err error) {
 		for _, tx := range txList {
 			// 只向已提交的分支事务发送 cancel 消息
 			if tx.status == txStatusPendingConfirm {
-				if err := m.cancelTx(context.Background(), tx.txInfo, this.txInfo); err != nil {
+				if err := m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 cancel 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}

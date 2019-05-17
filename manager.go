@@ -65,7 +65,7 @@ func (this *Manager) registerTx(ctx context.Context, toTx, fromTx *TxInfo) (err 
 	req.FromServerName = fromTx.ServerName
 	req.FromServerAddr = fromTx.ServerAddr
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Register(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return err
 }
@@ -108,7 +108,7 @@ func (this *Manager) commitTx(ctx context.Context, toTx, fromTx *TxInfo) (err er
 	//param.FromServerName = fromTx.ServerName
 	//param.FromServerAddr = fromTx.ServerAddr
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Commit(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return err
 }
@@ -139,7 +139,7 @@ func (this *Manager) rollbackTx(ctx context.Context, toTx, fromTx *TxInfo) (err 
 	//param.FromServerName = fromTx.ServerName
 	//param.FromServerAddr = fromTx.ServerAddr
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Rollback(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return err
 }
@@ -167,7 +167,7 @@ func (this *Manager) cancelTx(ctx context.Context, toTx, fromTx *TxInfo) (err er
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Cancel(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
@@ -192,7 +192,7 @@ func (this *Manager) confirmTx(ctx context.Context, toTx, fromTx *TxInfo) (err e
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Confirm(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
@@ -216,7 +216,7 @@ func (this *Manager) timeoutTx(ctx context.Context, toTx, fromTx *TxInfo) (err e
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
 
-	var ts = pb.NewTxService("", this.service.Client())
+	var ts = pb.NewTxService(toTx.ServerName, this.service.Client())
 	_, err = ts.Timeout(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
