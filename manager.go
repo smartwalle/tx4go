@@ -2,11 +2,11 @@ package tx4go
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"github.com/google/uuid"
-	"github.com/smartwalle/pks"
+	"github.com/micro/go-micro"
+	"github.com/micro/go-micro/client"
+	"github.com/smartwalle/tx4go/pb"
 	"sync"
 	"time"
 )
@@ -18,9 +18,9 @@ const (
 )
 
 var (
-	kErrTxNotFound           = errors.New("tx4go: not found")
-	kErrNotAllowed           = errors.New("tx4go: not allowed")
-	kErrUninitializedManager = errors.New("tx4go: uninitialized tx manager")
+	ErrTxNotFound           = errors.New("tx4go: not found")
+	ErrNotAllowed           = errors.New("tx4go: not allowed")
+	ErrUninitializedManager = errors.New("tx4go: uninitialized tx manager")
 )
 
 var m *Manager
@@ -31,7 +31,7 @@ type Manager struct {
 	serverUUID string
 	serverName string
 	serverAddr string
-	service    *pks.Service
+	service    micro.Service
 	codec      Codec
 
 	timeout    time.Duration
@@ -52,266 +52,206 @@ func (this *Manager) getTx(id string) *Tx {
 }
 
 func (this *Manager) run() {
-	this.service.Handle(getRegisterTxPath(this.serverUUID), this.registerTxHandler)
-	this.service.Handle(getCommitTxPath(this.serverUUID), this.commitTxHandler)
-	this.service.Handle(getRollbackTxPath(this.serverUUID), this.rollbackTxHandler)
-	this.service.Handle(getCancelTxPath(this.serverUUID), this.cancelTxHandler)
-	this.service.Handle(getConfirmTxPath(this.serverUUID), this.confirmTxHandler)
-	this.service.Handle(getTimeoutTxPath(this.serverUUID), this.timeoutTxHandler)
+	pb.RegisterTxHandler(this.service.Server(), this)
 }
 
 // --------------------------------------------------------------------------------
-// registerTxHandler 分支事务向主事务发起注册事务的请求
-func (this *Manager) registerTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
-	param.FromServerUUID = fromTx.ServerUUID
-	param.FromServerName = fromTx.ServerName
-	param.FromServerAddr = fromTx.ServerAddr
+// registerTx 分支事务向主事务发起注册事务的请求
+func (this *Manager) registerTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
+	req.FromServerUUID = fromTx.ServerUUID
+	req.FromServerName = fromTx.ServerName
+	req.FromServerAddr = fromTx.ServerAddr
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getRegisterTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Register(ctx, req, client.WithAddress(toTx.ServerAddr))
+	return err
 }
 
-// registerTxHandler 主事务处理分支事务发起的注册事务的请求
-func (this *Manager) registerTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+// Register 主事务处理分支事务发起的注册事务的请求
+func (this *Manager) Register(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	if param == nil {
-		return kErrTxNotFound
-	}
-
-	var tx = this.getTx(param.ToId)
+	var tx = this.getTx(req.ToId)
 	if tx == nil {
-		return kErrTxNotFound
+		return ErrTxNotFound
 	}
 
 	var bTx = &Tx{}
-	bTx.id = param.FromId
+	bTx.id = req.FromId
 	bTx.tType = txTypeBranch
 	bTx.status = txStatusPending
 	bTx.txInfo = &TxInfo{}
-	bTx.txInfo.TxId = param.FromId
-	bTx.txInfo.ServerUUID = param.FromServerUUID
-	bTx.txInfo.ServerName = param.FromServerName
-	bTx.txInfo.ServerAddr = param.FromServerAddr
+	bTx.txInfo.TxId = req.FromId
+	bTx.txInfo.ServerUUID = req.FromServerUUID
+	bTx.txInfo.ServerName = req.FromServerName
+	bTx.txInfo.ServerAddr = req.FromServerAddr
 
 	if ok := tx.registerTxHandler(bTx); ok == false {
-		return kErrNotAllowed
+		return ErrNotAllowed
 	}
 
 	return nil
 }
 
 // --------------------------------------------------------------------------------
-// commitTxHandler 分支事务向主事务发起提交事务的请求
-func (this *Manager) commitTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
+// commitTx 分支事务向主事务发起提交事务的请求
+func (this *Manager) commitTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
 	//param.FromServerUUID = fromTx.ServerUUID
 	//param.FromServerName = fromTx.ServerName
 	//param.FromServerAddr = fromTx.ServerAddr
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getCommitTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Commit(ctx, req, client.WithAddress(toTx.ServerAddr))
+	return err
 }
 
-// commitTxHandler 主事务处理分支事务发起的提交事务的请求
-func (this *Manager) commitTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+// Commit 主事务处理分支事务发起的提交事务的请求
+func (this *Manager) Commit(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	if param == nil {
-		return kErrTxNotFound
-	}
-
-	var tx = this.getTx(param.ToId)
+	var tx = this.getTx(req.ToId)
 	if tx == nil {
-		return kErrTxNotFound
+		return ErrTxNotFound
 	}
 
-	tx.commitTxHandler(param.FromId)
+	tx.commitTxHandler(req.FromId)
 
 	return nil
 }
 
 // --------------------------------------------------------------------------------
-// rollbackTxHandler 分支事务向主事务发起回滚事务的请求
-func (this *Manager) rollbackTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
+// rollbackTx 分支事务向主事务发起回滚事务的请求
+func (this *Manager) rollbackTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
 	//param.FromServerUUID = fromTx.ServerUUID
 	//param.FromServerName = fromTx.ServerName
 	//param.FromServerAddr = fromTx.ServerAddr
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getRollbackTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Rollback(ctx, req, client.WithAddress(toTx.ServerAddr))
+	return err
 }
 
-// rollbackTxHandler 主事务处理分支事务发起的回滚事务的请求
-func (this *Manager) rollbackTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+// Rollback 主事务处理分支事务发起的回滚事务的请求
+func (this *Manager) Rollback(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	if param == nil {
-		return kErrTxNotFound
-	}
-
-	var tx = this.getTx(param.ToId)
+	var tx = this.getTx(req.ToId)
 	if tx == nil {
-		return kErrTxNotFound
+		return ErrTxNotFound
 	}
 
-	tx.rollbackTxHandler(param.FromId)
+	tx.rollbackTxHandler(req.FromId)
 
 	return nil
 }
 
 // --------------------------------------------------------------------------------
 // cancelTx 主事务向分支事务发起取消事务的请求
-func (this *Manager) cancelTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
+func (this *Manager) cancelTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getCancelTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Cancel(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
 
-// cancelTxHandler 分支事务处理主事务发起的取消事务的请求
-func (this *Manager) cancelTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+// Cancel 分支事务处理主事务发起的取消事务的请求
+func (this *Manager) Cancel(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	var tx = this.getTx(param.ToId)
-	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
+	var tx = this.getTx(req.ToId)
+	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == req.FromId {
 		tx.cancelTxHandler()
 	}
-
 	return nil
 }
 
 // --------------------------------------------------------------------------------
 // confirmTx 主事务向分支事务发起确认事务的请求
-func (this *Manager) confirmTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
+func (this *Manager) confirmTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getConfirmTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Confirm(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
 
-// confirmTxHandler 分支事务处理主事务发起的确认事务的请求
-func (this *Manager) confirmTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+// Confirm 分支事务处理主事务发起的确认事务的请求
+func (this *Manager) Confirm(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	var tx = this.getTx(param.ToId)
-	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == param.FromId {
+	var tx = this.getTx(req.ToId)
+	if tx != nil && tx.rootTxInfo != nil && tx.rootTxInfo.TxId == req.FromId {
 		tx.confirmTxHandler()
 	}
-
 	return nil
 }
 
 // --------------------------------------------------------------------------------
-func (this *Manager) timeoutTx(toTx, fromTx *TxInfo) (err error) {
-	var param = &TxReqParam{}
-	param.ToId = toTx.TxId
-	param.FromId = fromTx.TxId
+func (this *Manager) timeoutTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+	var req = &pb.TxReq{}
+	req.ToId = toTx.TxId
+	req.FromId = fromTx.TxId
 
-	_, err = this.request(context.Background(), toTx.ServerAddr, getTimeoutTxPath(toTx.ServerUUID), param)
-	if err != nil {
-		return err
-	}
-
+	var ts = pb.NewTxService("", this.service.Client())
+	_, err = ts.Timeout(ctx, req, client.WithAddress(toTx.ServerAddr))
 	return nil
 }
 
-func (this *Manager) timeoutTxHandler(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-	var param *TxReqParam
-	if err := json.Unmarshal(req.Body, &param); err != nil {
-		return err
+func (this *Manager) Timeout(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+	if req == nil {
+		return ErrTxNotFound
 	}
 
-	if param == nil {
-		return kErrTxNotFound
-	}
-
-	var tx = this.getTx(param.ToId)
+	var tx = this.getTx(req.ToId)
 	if tx == nil {
-		return kErrTxNotFound
+		return ErrTxNotFound
 	}
 
-	tx.timeoutTxHandler(param.FromId)
+	tx.timeoutTxHandler(req.FromId)
 
 	return nil
-}
-
-// --------------------------------------------------------------------------------
-func (this *Manager) request(ctx context.Context, address, path string, param interface{}) (rsp *pks.Response, err error) {
-	paramBytes, err := json.Marshal(param)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := 0; i <= this.retryCount; i++ {
-		if i != 0 {
-			time.Sleep(this.retryDelay)
-		}
-		if rsp, err = this.service.RequestAddress(ctx, address, path, nil, paramBytes); err == nil {
-			return rsp, nil
-		}
-	}
-
-	return rsp, err
 }
 
 // --------------------------------------------------------------------------------
 var initOnce sync.Once
 
-func Init(s *pks.Service, opts ...Option) {
+func Init(s micro.Service, opts ...Option) {
 	initOnce.Do(func() {
 		m = &Manager{}
 		m.hub = newTxHub()
 		m.service = s
 		m.serverUUID = uuid.New().String()
-		m.serverName = s.ServerName()
-		m.serverAddr = s.ServerAddress()
+
+		if m.service != nil {
+			if m.service.Server() != nil {
+				m.serverName = m.service.Server().Options().Name
+				m.serverAddr = m.service.Server().Options().Address
+			}
+		}
 
 		m.timeout = kDefaultTimeout
 		m.retryCount = kDefaultRetryCount
@@ -331,38 +271,4 @@ func Init(s *pks.Service, opts ...Option) {
 
 		logger.Printf("初始化事务管理器 %s 成功 \n", m.serverUUID)
 	})
-}
-
-// --------------------------------------------------------------------------------
-func getRegisterTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-register", serverUUID)
-}
-
-func getCommitTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-commit", serverUUID)
-}
-
-func getRollbackTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-rollback", serverUUID)
-}
-
-func getCancelTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-cancel", serverUUID)
-}
-
-func getConfirmTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-confirm", serverUUID)
-}
-
-func getTimeoutTxPath(serverUUID string) string {
-	return fmt.Sprintf("tx-%s-timeout", serverUUID)
-}
-
-// --------------------------------------------------------------------------------
-type TxReqParam struct {
-	ToId           string `json:"to_id"`                      // 目标事务id
-	FromId         string `json:"from_id"`                    // 请求来源事务的 id
-	FromServerUUID string `json:"from_server_uuid,omitempty"` // 请求来源事务的 server uuid
-	FromServerName string `json:"from_server_name,omitempty"` // 请求来源事务的 server name
-	FromServerAddr string `json:"from_server_addr,omitempty"` // 请求来源事务的 server addr
 }
