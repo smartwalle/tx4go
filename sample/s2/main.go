@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/micro/go-micro"
 	"github.com/micro/go-micro/client"
 	"github.com/micro/go-micro/server"
@@ -9,10 +10,11 @@ import (
 	wo "github.com/micro/go-plugins/wrapper/trace/opentracing"
 	"github.com/smartwalle/jaeger4go"
 	"github.com/smartwalle/log4go"
-	"github.com/smartwalle/pks"
 	pks_client "github.com/smartwalle/pks/plugins/client/pks_grpc"
 	pks_server "github.com/smartwalle/pks/plugins/server/pks_grpc"
 	"github.com/smartwalle/tx4go"
+	"github.com/smartwalle/tx4go/sample/s1/s1pb"
+	"github.com/smartwalle/tx4go/sample/s2/s2pb"
 	"time"
 )
 
@@ -30,37 +32,47 @@ func main() {
 	}
 	defer closer.Close()
 
-	var s = pks.New(
-		micro.Server(pks_server.NewServer(server.Address("192.168.1.99:8921"))),
+	var s = micro.NewService(
+		micro.Server(pks_server.NewServer(server.Address("192.168.1.99:8912"))),
 		micro.Client(pks_client.NewClient(client.PoolSize(10))),
-		micro.RegisterTTL(time.Second*60),
-		micro.RegisterInterval(time.Second*40),
+		micro.RegisterTTL(time.Second*10),
+		micro.RegisterInterval(time.Second*5),
 		micro.Registry(etcdv3.NewRegistry()),
 		micro.Name("tx-s2"),
 		micro.WrapHandler(wo.NewHandlerWrapper()),
 		micro.WrapClient(wo.NewClientWrapper()),
 	)
 
-	tx4go.Init(s.Service())
+	tx4go.SetLogger(nil)
+	tx4go.Init(s)
 
-	s.Handle("h2", func(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-		log4go.Infof("-----收到来自 %s 的请求-----\n", req.FromService())
-
-		tx, ctx, err := tx4go.Begin(ctx, func() {
-			log4go.Println("confirm")
-		}, func() {
-			log4go.Errorln("cancel")
-		})
-
-		if err != nil {
-			log4go.Infoln("tx error", tx, err)
-			return nil
-		}
-
-		s.Request(ctx, "tx-s1", "h1", nil, nil)
-		tx.Rollback()
-		return nil
-	})
+	s2pb.RegisterS2Handler(s.Server(), &S2{s: s})
 
 	s.Run()
+}
+
+type S2 struct {
+	s micro.Service
+}
+
+func (this *S2) Call(ctx context.Context, req *s2pb.Req, rsp *s2pb.Rsp) error {
+	fmt.Println("s2 收到请求")
+
+	tx, ctx, err := tx4go.Begin(ctx, func() {
+		log4go.Println("confirm")
+	}, func() {
+		log4go.Errorln("cancel")
+	})
+
+	if err != nil {
+		log4go.Errorln("tx error", err)
+		return err
+	}
+
+	var ts = s1pb.NewS1Service("tx-s1", this.s.Client())
+	ts.Call(ctx, &s1pb.Req{})
+
+	tx.Rollback()
+
+	return nil
 }

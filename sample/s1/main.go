@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/micro/go-micro"
 	"github.com/micro/go-micro/client"
 	"github.com/micro/go-micro/server"
@@ -9,10 +10,10 @@ import (
 	wo "github.com/micro/go-plugins/wrapper/trace/opentracing"
 	"github.com/smartwalle/jaeger4go"
 	"github.com/smartwalle/log4go"
-	"github.com/smartwalle/pks"
 	pks_client "github.com/smartwalle/pks/plugins/client/pks_grpc"
 	pks_server "github.com/smartwalle/pks/plugins/server/pks_grpc"
 	"github.com/smartwalle/tx4go"
+	"github.com/smartwalle/tx4go/sample/s1/s1pb"
 	"time"
 )
 
@@ -30,7 +31,7 @@ func main() {
 	}
 	defer closer.Close()
 
-	var s = pks.New(
+	var s = micro.NewService(
 		micro.Server(pks_server.NewServer(server.Address("192.168.1.99:8911"))),
 		micro.Client(pks_client.NewClient(client.PoolSize(10))),
 		micro.RegisterTTL(time.Second*10),
@@ -41,26 +42,32 @@ func main() {
 		micro.WrapClient(wo.NewClientWrapper()),
 	)
 
-	tx4go.Init(s.Service())
+	tx4go.SetLogger(nil)
+	tx4go.Init(s)
 
-	s.Handle("h1", func(ctx context.Context, req *pks.Request, rsp *pks.Response) error {
-		log4go.Infof("-----收到来自 %s 的请求-----\n", req.FromService())
-
-		tx, ctx, err := tx4go.Begin(ctx, func() {
-			log4go.Println("confirm")
-		}, func() {
-			log4go.Errorln("cancel")
-		})
-
-		if err != nil {
-			log4go.Infoln("tx error", err, tx)
-			return nil
-		}
-
-		tx.Commit()
-
-		return nil
-	})
+	s1pb.RegisterS1Handler(s.Server(), &S1{})
 
 	s.Run()
+}
+
+type S1 struct {
+}
+
+func (this *S1) Call(ctx context.Context, req *s1pb.Req, rsp *s1pb.Rsp) error {
+	fmt.Println("s1 收到请求")
+
+	tx, ctx, err := tx4go.Begin(ctx, func() {
+		log4go.Println("confirm")
+	}, func() {
+		log4go.Errorln("cancel")
+	})
+
+	if err != nil {
+		log4go.Errorln("tx error", err)
+		return err
+	}
+
+	tx.Commit()
+
+	return nil
 }
