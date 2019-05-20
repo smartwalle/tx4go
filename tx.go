@@ -47,7 +47,6 @@ type Tx struct {
 	hub *txHub // 用于主事务端维护各分支事务
 
 	ttlCancel context.CancelFunc
-	ttlCtx    context.Context
 
 	txInfo         *TxInfo  // 当前事务的信息
 	rootTxInfo     *TxInfo  // 主事务的信息
@@ -152,18 +151,19 @@ func (this *Tx) setupTTL() {
 		return
 	}
 
-	this.ttlCtx, this.ttlCancel = context.WithDeadline(this.ctx, this.txInfo.TTL)
+	var ttlCtx context.Context
+	ttlCtx, this.ttlCancel = context.WithDeadline(this.ctx, this.txInfo.TTL)
 
 	logger.Printf("事务 %s 添加超时检测任务成功, 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
 
-	go this.runTTL()
+	go this.runTTL(ttlCtx)
 }
 
-func (this *Tx) runTTL() {
+func (this *Tx) runTTL(ctx context.Context) {
 	for {
 		select {
-		case <-this.ttlCtx.Done():
-			var err = this.ttlCtx.Err()
+		case <-ctx.Done():
+			var err = ctx.Err()
 			if err == context.DeadlineExceeded {
 				this.ttlHandler()
 			} else if err == context.Canceled {
@@ -184,7 +184,6 @@ func (this *Tx) ttlHandler() {
 	}
 
 	this.ttlCancel = nil
-	this.ttlCtx = nil
 	this.status = txStatusPendingCancel
 
 	logger.Printf("事务 %s 超时, 将执行 cancel 操作 \n", this.idPath())
