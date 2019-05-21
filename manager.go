@@ -262,7 +262,7 @@ func Init(s micro.Service, opts ...Option) {
 		}
 
 		if m.codec == nil {
-			m.codec = &MicroCodec{}
+			m.codec = &DefaultCodec{}
 		}
 
 		m.run()
