@@ -152,7 +152,7 @@ func (this *Tx) setupTTL() {
 	}
 
 	var ttlCtx context.Context
-	ttlCtx, this.ttlCancel = context.WithDeadline(this.ctx, this.txInfo.TTL)
+	ttlCtx, this.ttlCancel = context.WithDeadline(context.Background(), this.txInfo.TTL)
 
 	logger.Printf("事务 %s 添加超时检测任务成功, 将在 %s 超时 \n", this.idPath(), this.txInfo.TTL)
 
