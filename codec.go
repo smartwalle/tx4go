@@ -34,14 +34,15 @@ func (this *DefaultCodec) Encode(ctx context.Context, info *TxInfo) context.Cont
 	md, ok := mm.FromContext(ctx)
 	if ok == false {
 		md = mm.Metadata{}
+		ctx = mm.NewContext(ctx, md)
 	}
 	md[kTxInfo] = string(infoBytes)
-	ctx = mm.NewContext(ctx, md)
 
 	// 写入 grpc context
 	gmd, ok := gm.FromIncomingContext(ctx)
 	if ok == false {
 		gmd = gm.New(nil)
+		ctx = gm.NewOutgoingContext(ctx, gmd)
 	}
 	outMD, _ := gm.FromOutgoingContext(ctx)
 	for key, values := range outMD {
@@ -49,7 +50,7 @@ func (this *DefaultCodec) Encode(ctx context.Context, info *TxInfo) context.Cont
 	}
 	gmd.Set(kTxInfo, string(infoBytes))
 
-	return gm.NewOutgoingContext(ctx, gmd)
+	return ctx
 }
 
 func (this *DefaultCodec) Decode(ctx context.Context) (*TxInfo, error) {
