@@ -36,7 +36,7 @@ func NewCallWrapper() client.CallWrapper {
 	return func(cf client.CallFunc) client.CallFunc {
 		return func(ctx context.Context, node *registry.Node, req client.Request, rsp interface{}, opts client.CallOptions) error {
 			md, ok := metadata.FromContext(ctx)
-			if ok {
+			if !ok {
 				md = metadata.Metadata{}
 				ctx = metadata.NewContext(ctx, md)
 			}
