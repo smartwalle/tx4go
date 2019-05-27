@@ -87,10 +87,6 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 	t.txInfo.ServerUUID = m.serverUUID
 	t.txInfo.TTL = ttl
 
-	//var rootTxInfo, err = m.codec.Decode(ctx)
-	//if err != nil {
-	//	return nil, ctx, err
-	//}
 	var rootTxInfo, _ = FromContext(ctx)
 
 	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("%s.Tx.Begin", m.serverName))
@@ -103,7 +99,6 @@ func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Con
 		t.tType = txTypeRoot
 
 		// 将当前事务的信息放置到 ctx 中
-		//t.ctx = m.codec.Encode(t.ctx, t.txInfo)
 		t.ctx = NewContext(ctx, t.txInfo)
 	} else {
 		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
