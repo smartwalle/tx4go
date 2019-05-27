@@ -32,7 +32,6 @@ type Manager struct {
 	serverName string
 	serverAddr string
 	service    micro.Service
-	//codec      Codec
 
 	timeout    time.Duration
 	retryDelay time.Duration
@@ -260,10 +259,6 @@ func Init(s micro.Service, opts ...Option) {
 		for _, opt := range opts {
 			opt.Apply(m)
 		}
-
-		//if m.codec == nil {
-		//	m.codec = &DefaultCodec{}
-		//}
 
 		m.run()
 

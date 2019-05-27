@@ -32,9 +32,3 @@ func WithRetryDelay(delay time.Duration) Option {
 		m.retryDelay = delay
 	})
 }
-
-//func WithCodec(codec Codec) Option {
-//	return optionFunc(func(m *Manager) {
-//		m.codec = codec
-//	})
-//}
