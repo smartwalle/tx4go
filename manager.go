@@ -3,11 +3,12 @@ package tx4go
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
-	"github.com/micro/go-micro"
-	"github.com/micro/go-micro/client"
+	"github.com/micro/go-micro/v2"
+	"github.com/micro/go-micro/v2/client"
+	"github.com/opentracing/opentracing-go"
 	"github.com/smartwalle/tx4go/pb"
-	"sync"
 	"time"
 )
 
@@ -18,15 +19,43 @@ const (
 )
 
 var (
-	ErrTxNotFound           = errors.New("tx4go: not found")
-	ErrNotAllowed           = errors.New("tx4go: not allowed")
-	ErrUninitializedManager = errors.New("tx4go: uninitialized tx manager")
+	ErrTxNotFound = errors.New("tx4go: not found")
+	ErrNotAllowed = errors.New("tx4go: not allowed")
 )
 
-var m *Manager
+type Manager interface {
+	Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Context, error)
+}
 
-type Manager struct {
-	isInit     bool
+func NewManager(s micro.Service, opts ...Option) Manager {
+	var m = &txManager{}
+	m.hub = newTxHub()
+	m.service = s
+
+	if m.service != nil {
+		if m.service.Server() != nil {
+			m.serverUUID = m.service.Server().Options().Id
+			m.serverName = m.service.Server().Options().Name
+			m.serverAddr = m.service.Server().Options().Address
+		}
+	}
+
+	m.timeout = kDefaultTimeout
+	m.retryCount = kDefaultRetryCount
+	m.retryDelay = kDefaultRetryDelay
+
+	for _, opt := range opts {
+		opt.Apply(m)
+	}
+
+	m.run()
+
+	logger.Printf("初始化事务管理器 %s 成功 \n", m.serverUUID)
+
+	return m
+}
+
+type txManager struct {
 	hub        *txHub
 	serverUUID string
 	serverName string
@@ -38,25 +67,24 @@ type Manager struct {
 	retryCount int
 }
 
-func (this *Manager) addTx(tx *Tx) {
+func (this *txManager) addTx(tx *Tx) {
 	this.hub.addTx(tx)
 }
 
-func (this *Manager) delTx(id string) {
+func (this *txManager) delTx(id string) {
 	this.hub.delTx(id)
 }
 
-func (this *Manager) getTx(id string) *Tx {
+func (this *txManager) getTx(id string) *Tx {
 	return this.hub.getTx(id)
 }
 
-func (this *Manager) run() {
+func (this *txManager) run() {
 	pb.RegisterTxHandler(this.service.Server(), this)
 }
 
-// --------------------------------------------------------------------------------
 // registerTx 分支事务向主事务发起注册事务的请求
-func (this *Manager) registerTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) registerTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -70,7 +98,7 @@ func (this *Manager) registerTx(ctx context.Context, toTx, fromTx *TxInfo) (err 
 }
 
 // Register 主事务处理分支事务发起的注册事务的请求
-func (this *Manager) Register(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Register(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -97,9 +125,8 @@ func (this *Manager) Register(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp)
 	return nil
 }
 
-// --------------------------------------------------------------------------------
 // commitTx 分支事务向主事务发起提交事务的请求
-func (this *Manager) commitTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) commitTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -113,7 +140,7 @@ func (this *Manager) commitTx(ctx context.Context, toTx, fromTx *TxInfo) (err er
 }
 
 // Commit 主事务处理分支事务发起的提交事务的请求
-func (this *Manager) Commit(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Commit(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -128,9 +155,8 @@ func (this *Manager) Commit(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) e
 	return nil
 }
 
-// --------------------------------------------------------------------------------
 // rollbackTx 分支事务向主事务发起回滚事务的请求
-func (this *Manager) rollbackTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) rollbackTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -144,7 +170,7 @@ func (this *Manager) rollbackTx(ctx context.Context, toTx, fromTx *TxInfo) (err 
 }
 
 // Rollback 主事务处理分支事务发起的回滚事务的请求
-func (this *Manager) Rollback(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Rollback(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -159,9 +185,8 @@ func (this *Manager) Rollback(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp)
 	return nil
 }
 
-// --------------------------------------------------------------------------------
 // cancelTx 主事务向分支事务发起取消事务的请求
-func (this *Manager) cancelTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) cancelTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -172,7 +197,7 @@ func (this *Manager) cancelTx(ctx context.Context, toTx, fromTx *TxInfo) (err er
 }
 
 // Cancel 分支事务处理主事务发起的取消事务的请求
-func (this *Manager) Cancel(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Cancel(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -184,9 +209,8 @@ func (this *Manager) Cancel(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) e
 	return nil
 }
 
-// --------------------------------------------------------------------------------
 // confirmTx 主事务向分支事务发起确认事务的请求
-func (this *Manager) confirmTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) confirmTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -197,7 +221,7 @@ func (this *Manager) confirmTx(ctx context.Context, toTx, fromTx *TxInfo) (err e
 }
 
 // Confirm 分支事务处理主事务发起的确认事务的请求
-func (this *Manager) Confirm(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Confirm(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -209,8 +233,7 @@ func (this *Manager) Confirm(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) 
 	return nil
 }
 
-// --------------------------------------------------------------------------------
-func (this *Manager) timeoutTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
+func (this *txManager) timeoutTx(ctx context.Context, toTx, fromTx *TxInfo) (err error) {
 	var req = &pb.TxReq{}
 	req.ToId = toTx.TxId
 	req.FromId = fromTx.TxId
@@ -220,7 +243,7 @@ func (this *Manager) timeoutTx(ctx context.Context, toTx, fromTx *TxInfo) (err e
 	return nil
 }
 
-func (this *Manager) Timeout(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
+func (this *txManager) Timeout(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) error {
 	if req == nil {
 		return ErrTxNotFound
 	}
@@ -235,35 +258,67 @@ func (this *Manager) Timeout(ctx context.Context, req *pb.TxReq, rsp *pb.TxRsp) 
 	return nil
 }
 
-// --------------------------------------------------------------------------------
-var initOnce sync.Once
+func (this *txManager) Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Context, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
-func Init(s micro.Service, opts ...Option) {
-	initOnce.Do(func() {
-		m = &Manager{}
-		m.hub = newTxHub()
-		m.service = s
-		m.serverUUID = uuid.New().String()
+	var t = &Tx{}
+	t.id = uuid.New().String()
+	t.status = txStatusPending
+	t.hub = newTxHub()
+	t.m = this
 
-		if m.service != nil {
-			if m.service.Server() != nil {
-				m.serverName = m.service.Server().Options().Name
-				m.serverAddr = m.service.Server().Options().Address
-			}
+	t.confirmHandler = confirm
+	t.cancelHandler = cancel
+
+	var ttl time.Time
+	if this.timeout > 0 {
+		ttl = time.Now().Add(this.timeout)
+	}
+
+	// 构建当前事务的信息
+	t.txInfo = &TxInfo{}
+	t.txInfo.TxId = t.id
+	t.txInfo.ServerName = this.serverName
+	t.txInfo.ServerAddr = this.serverAddr
+	t.txInfo.ServerUUID = this.serverUUID
+	t.txInfo.TTL = ttl
+
+	var rootTxInfo, _ = FromContext(ctx)
+
+	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("%s.Tx.Begin", this.serverName))
+	span.Finish()
+
+	t.ctx = ctx
+
+	if rootTxInfo == nil {
+		// 如果 rootTxInfo 为空，则表示当前事务为主事务
+		t.tType = txTypeRoot
+
+		// 将当前事务的信息放置到 ctx 中
+		t.ctx = NewContext(ctx, t.txInfo)
+	} else {
+		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
+		t.tType = txTypeBranch
+
+		// 构建当前事务的主事务信息
+		t.rootTxInfo = rootTxInfo
+		t.txInfo.TTL = rootTxInfo.TTL
+
+		// 发消息告知主事务，有分支事务建立
+		if err := t.register(ctx); err != nil {
+			return nil, nil, err
 		}
+	}
 
-		m.timeout = kDefaultTimeout
-		m.retryCount = kDefaultRetryCount
-		m.retryDelay = kDefaultRetryDelay
+	// 添加事务到管理器中
+	this.addTx(t)
 
-		for _, opt := range opts {
-			opt.Apply(m)
-		}
+	logger.Printf("事务 %s 创建成功 \n", t.idPath())
 
-		m.run()
+	// 启动超时处理
+	t.setupTTL()
 
-		m.isInit = true
-
-		logger.Printf("初始化事务管理器 %s 成功 \n", m.serverUUID)
-	})
+	return t, t.ctx, nil
 }

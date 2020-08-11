@@ -3,30 +3,26 @@ package tx4go
 import (
 	"context"
 	"encoding/json"
-	"github.com/micro/go-micro/client"
-	"github.com/micro/go-micro/metadata"
-	"github.com/micro/go-micro/registry"
-	"github.com/micro/go-micro/server"
+	"github.com/micro/go-micro/v2/client"
+	"github.com/micro/go-micro/v2/metadata"
+	"github.com/micro/go-micro/v2/registry"
+	"github.com/micro/go-micro/v2/server"
 )
 
 const (
-	kTxInfo = "tx-info"
+	kTxInfo = "Tx-Info"
 )
 
 func NewHandlerWrapper() server.HandlerWrapper {
 	return func(h server.HandlerFunc) server.HandlerFunc {
 		return func(ctx context.Context, req server.Request, rsp interface{}) error {
-			md, ok := metadata.FromContext(ctx)
-			if ok {
-				infoStr, ok := md[kTxInfo]
-				if ok && infoStr != "" {
-					var info *TxInfo
-					if err := json.Unmarshal([]byte(infoStr), &info); err == nil {
-						ctx = NewContext(ctx, info)
-					}
+			infoStr, ok := metadata.Get(ctx, kTxInfo)
+			if ok && infoStr != "" {
+				var info *TxInfo
+				if err := json.Unmarshal([]byte(infoStr), &info); err == nil {
+					ctx = NewContext(ctx, info)
 				}
 			}
-
 			return h(ctx, req, rsp)
 		}
 	}
@@ -35,17 +31,13 @@ func NewHandlerWrapper() server.HandlerWrapper {
 func NewCallWrapper() client.CallWrapper {
 	return func(cf client.CallFunc) client.CallFunc {
 		return func(ctx context.Context, node *registry.Node, req client.Request, rsp interface{}, opts client.CallOptions) error {
-			md, ok := metadata.FromContext(ctx)
-			if !ok {
-				md = metadata.Metadata{}
-				ctx = metadata.NewContext(ctx, md)
-			}
+			_, ok := metadata.Get(ctx, kTxInfo)
 
-			if _, ok = md[kTxInfo]; !ok {
+			if !ok {
 				var info, _ = FromContext(ctx)
 				if info != nil {
 					if infoBytes, err := json.Marshal(info); err == nil {
-						md[kTxInfo] = string(infoBytes)
+						ctx = metadata.Set(ctx, kTxInfo, string(infoBytes))
 					}
 				}
 			}

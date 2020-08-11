@@ -3,13 +3,10 @@ package tx4go
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/opentracing/opentracing-go"
 	"sync"
 	"time"
 )
 
-// --------------------------------------------------------------------------------
 type txStatus int
 
 const (
@@ -20,7 +17,6 @@ const (
 	txStatusCancel                                // 取消的 tx
 )
 
-// --------------------------------------------------------------------------------
 type txType int
 
 const (
@@ -28,7 +24,6 @@ const (
 	txTypeBranch                      // 分支事务
 )
 
-// --------------------------------------------------------------------------------
 // TxInfo 事务基本信息
 type TxInfo struct {
 	TxId       string    `json:"tx_id"`       // 事务 id
@@ -38,11 +33,11 @@ type TxInfo struct {
 	TTL        time.Time `json:"ttl"`         // 事务超时时间
 }
 
-// --------------------------------------------------------------------------------
 type Tx struct {
 	id string
 	mu sync.Mutex
 	w  sync.WaitGroup
+	m  *txManager
 
 	hub *txHub // 用于主事务端维护各分支事务
 
@@ -57,74 +52,6 @@ type Tx struct {
 	cancelHandler  func()
 }
 
-func Begin(ctx context.Context, confirm func(), cancel func()) (*Tx, context.Context, error) {
-	if m.isInit == false {
-		return nil, ctx, ErrUninitializedManager
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	var t = &Tx{}
-	t.id = uuid.New().String()
-	t.status = txStatusPending
-	t.hub = newTxHub()
-
-	t.confirmHandler = confirm
-	t.cancelHandler = cancel
-
-	var ttl time.Time
-	if m.timeout > 0 {
-		ttl = time.Now().Add(m.timeout)
-	}
-
-	// 构建当前事务的信息
-	t.txInfo = &TxInfo{}
-	t.txInfo.TxId = t.id
-	t.txInfo.ServerName = m.serverName
-	t.txInfo.ServerAddr = m.serverAddr
-	t.txInfo.ServerUUID = m.serverUUID
-	t.txInfo.TTL = ttl
-
-	var rootTxInfo, _ = FromContext(ctx)
-
-	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("%s.Tx.Begin", m.serverName))
-	span.Finish()
-
-	t.ctx = ctx
-
-	if rootTxInfo == nil {
-		// 如果 rootTxInfo 为空，则表示当前事务为主事务
-		t.tType = txTypeRoot
-
-		// 将当前事务的信息放置到 ctx 中
-		t.ctx = NewContext(ctx, t.txInfo)
-	} else {
-		// 如果 rootTxInfo 不为空，则表示当前事务为分支事务
-		t.tType = txTypeBranch
-
-		// 构建当前事务的主事务信息
-		t.rootTxInfo = rootTxInfo
-		t.txInfo.TTL = rootTxInfo.TTL
-
-		// 发消息告知主事务，有分支事务建立
-		if err := t.register(ctx); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	// 添加事务到管理器中
-	m.addTx(t)
-
-	logger.Printf("事务 %s 创建成功 \n", t.idPath())
-
-	// 启动超时处理
-	t.setupTTL()
-
-	return t, t.ctx, nil
-}
-
 func (this *Tx) Id() string {
 	return this.id
 }
@@ -136,7 +63,6 @@ func (this *Tx) idPath() string {
 	return this.id
 }
 
-// --------------------------------------------------------------------------------
 func (this *Tx) setupTTL() {
 	if this.ttlCancel != nil {
 		this.ttlCancel()
@@ -188,24 +114,23 @@ func (this *Tx) ttlHandler() {
 	if this.tType == txTypeRoot {
 		for _, tx := range this.hub.getTxList() {
 
-			go m.timeoutTx(this.ctx, tx.txInfo, this.txInfo)
+			go this.m.timeoutTx(this.ctx, tx.txInfo, this.txInfo)
 
 			if tx.status == txStatusPending {
 				this.w.Done()
 			}
 		}
 	} else {
-		go m.timeoutTx(this.ctx, this.rootTxInfo, this.txInfo)
+		go this.m.timeoutTx(this.ctx, this.rootTxInfo, this.txInfo)
 	}
 
 	// 事务自身进行 cancel 操作
 	this.cancelTx()
 }
 
-// --------------------------------------------------------------------------------
 // register 分支事务向主事务注册（分）
 func (this *Tx) register(ctx context.Context) error {
-	if err := m.registerTx(ctx, this.rootTxInfo, this.txInfo); err != nil {
+	if err := this.m.registerTx(ctx, this.rootTxInfo, this.txInfo); err != nil {
 		logger.Printf("事务 %s 注册分支事务失败, 错误信息为: %s \n", this.rootTxInfo.TxId, err)
 		return err
 	}
@@ -239,7 +164,6 @@ func (this *Tx) registerTxHandler(tx *Tx) bool {
 	return true
 }
 
-// --------------------------------------------------------------------------------
 // Commit 提交事务
 // 分支事务 - 发消息告知主事务，将该分支事务的状态调整为提交状态
 // 主事务 - 等待所有分支事务的消息，并判断所有分支事务的状态，决定是 cancel 还是 confirm，向所有的分支事务派发对应的消息
@@ -250,7 +174,7 @@ func (this *Tx) Commit() (err error) {
 
 	if this.tType == txTypeBranch {
 		// 如果是分支事务，则向主事务发送消息
-		if err = m.commitTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
+		if err = this.m.commitTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
 			this.status = txStatusPendingConfirm
 			logger.Printf("事务 %s 发送 commit 消息成功 \n", this.idPath())
 		} else {
@@ -289,7 +213,7 @@ func (this *Tx) Commit() (err error) {
 			// 通知所有的分支事务，进行 cancel 操作
 			logger.Printf("事务 %s 有分支事务不能 confirm, 将通知所有的分支事务执行 cancel 操作 \n", this.id)
 			for _, tx := range txList {
-				if err := m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
+				if err := this.m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 cancel 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}
@@ -299,7 +223,7 @@ func (this *Tx) Commit() (err error) {
 			// 通知所有的分支事务，进行 confirm 操作
 			logger.Printf("事务 %s 可以执行 confirm 操作, 将通知所有的分支事务执行 confirm 操作 \n", this.id)
 			for _, tx := range txList {
-				if err := m.confirmTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
+				if err := this.m.confirmTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 confirm 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}
@@ -332,7 +256,6 @@ func (this *Tx) commitTxHandler(txId string) {
 	}
 }
 
-// --------------------------------------------------------------------------------
 // cancelTxHandler 取消事务（分）
 func (this *Tx) cancelTxHandler() {
 	this.mu.Lock()
@@ -372,10 +295,9 @@ func (this *Tx) cancelTx() {
 
 	this.status = txStatusCancel
 
-	m.delTx(this.id)
+	this.m.delTx(this.id)
 }
 
-// --------------------------------------------------------------------------------
 // confirmTxHandler 确认事务（分）
 func (this *Tx) confirmTxHandler() {
 	this.mu.Lock()
@@ -414,10 +336,9 @@ func (this *Tx) confirmTx() {
 
 	this.status = txStatusConfirm
 
-	m.delTx(this.id)
+	this.m.delTx(this.id)
 }
 
-// --------------------------------------------------------------------------------
 // Rollback 回滚事务
 // 分支事务 - 发消息告知主事务，将该分支事务的状态调整为回滚状态
 // 主事务 - 等待所有分支事务的消息，接收到所有分支事务的消息之后，向所有的分支事务派发 cancel 消息
@@ -432,7 +353,7 @@ func (this *Tx) Rollback() (err error) {
 			return
 		}
 
-		if err = m.rollbackTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
+		if err = this.m.rollbackTx(this.ctx, this.rootTxInfo, this.txInfo); err == nil {
 			logger.Printf("事务 %s 发送 rollback 消息成功 \n", this.idPath())
 		} else {
 			logger.Printf("事务 %s 发送 rollback 消息失败, 错误信息为: %s \n", this.idPath(), err)
@@ -459,7 +380,7 @@ func (this *Tx) Rollback() (err error) {
 		for _, tx := range txList {
 			// 只向已提交的分支事务发送 cancel 消息
 			if tx.status == txStatusPendingConfirm {
-				if err := m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
+				if err := this.m.cancelTx(this.ctx, tx.txInfo, this.txInfo); err != nil {
 					logger.Printf("事务 %s 向分支事务 %s 发送 cancel 消息失败, 错误信息为: %s \n", this.id, tx.id, err)
 				}
 			}
@@ -494,7 +415,6 @@ func (this *Tx) rollbackTxHandler(txId string) {
 	}
 }
 
-// --------------------------------------------------------------------------------
 func (this *Tx) timeoutTxHandler(txId string) {
 	this.mu.Lock()
 	defer this.mu.Unlock()
